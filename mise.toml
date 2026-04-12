@@ -2,3 +2,13 @@
 go = "latest"
 node = "latest"
 pnpm = "latest"
+
+[tasks.backend]
+description = "Start Go API server (port 8080) — pulls python:3.14-slim on first run"
+run = "go run ./cmd/server/main.go"
+dir = "backend"
+
+[tasks.frontend]
+description = "Start Next.js dev server (port 3000)"
+run = "pnpm dev"
+dir = "frontend"
