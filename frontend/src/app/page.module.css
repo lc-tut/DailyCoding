@@ -1,0 +1,32 @@
+.layout {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  background: #181825;
+  border-bottom: 1px solid #313244;
+  flex-shrink: 0;
+}
+
+.logo {
+  font-size: 18px;
+  font-weight: 700;
+  color: #cba6f7;
+}
+
+.subtitle {
+  font-size: 13px;
+  color: #6c7086;
+}
+
+.main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
