@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"log"
-	"net/http"
 	"os"
 	"time"
+
+	"github.com/labstack/echo/v5"
+	"github.com/labstack/echo/v5/middleware"
 
 	"daileycoding/backend/internal/handler"
 	dockerexec "daileycoding/backend/internal/infrastructure/docker"
@@ -15,6 +17,7 @@ import (
 func main() {
 	image := getEnv("PYTHON_IMAGE", "python:3.14-slim")
 	addr := getEnv("ADDR", ":8080")
+	frontendOrigin := getEnv("FRONTEND_ORIGIN", "http://localhost:3000")
 
 	executor, err := dockerexec.NewExecutor(image)
 	if err != nil {
@@ -31,27 +34,18 @@ func main() {
 	judgeUsecase := usecase.NewJudgeUsecase(executor)
 	submitHandler := handler.NewSubmitHandler(judgeUsecase)
 
-	mux := http.NewServeMux()
-	mux.Handle("/api/submit", withCORS(submitHandler))
+	e := echo.New()
+
+	e.Use(middleware.Recover())
+	e.Use(middleware.RequestLogger())
+	e.Use(middleware.CORS(frontendOrigin))
+
+	e.POST("/api/submit", submitHandler.Handle)
 
 	log.Printf("server starting on %s (image: %s)", addr, image)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	if err := e.Start(addr); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
-}
-
-// withCORS はフロントエンド(localhost:3000)からのリクエストを許可する
-func withCORS(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
-		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 func getEnv(key, fallback string) string {

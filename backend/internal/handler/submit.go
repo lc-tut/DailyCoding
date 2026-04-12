@@ -2,8 +2,9 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
+
+	"github.com/labstack/echo/v5"
 
 	"daileycoding/backend/internal/domain"
 	"daileycoding/backend/internal/usecase"
@@ -22,28 +23,20 @@ func NewSubmitHandler(uc *usecase.JudgeUsecase) *SubmitHandler {
 	return &SubmitHandler{usecase: uc}
 }
 
-func (h *SubmitHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
+// Handle は echo.HandlerFunc として動作する
+func (h *SubmitHandler) Handle(c *echo.Context) error {
 	var req domain.SubmitRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid request body"})
 	}
 	if req.Code == "" {
-		http.Error(w, "code is required", http.StatusBadRequest)
-		return
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "code is required"})
 	}
 
-	result, err := h.usecase.Judge(r.Context(), req.Code)
+	result, err := h.usecase.Judge(c.Request().Context(), req.Code)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	return c.JSON(http.StatusOK, result)
 }
