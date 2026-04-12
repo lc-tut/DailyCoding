@@ -1,15 +1,17 @@
 package domain
 
-// TestCase はひとつのテストケースを表す
-type TestCase struct {
-	Input    string
-	Expected string
+import "github.com/google/uuid"
+
+// SubmitRequest はフロントエンドから受け取るリクエスト
+type SubmitRequest struct {
+	ProblemID uuid.UUID `json:"problem_id"`
+	Code      string    `json:"code"`
 }
 
-// TestResult はひとつのテストケースの採点結果
+// TestResult はひとつのテストケースの採点結果（API レスポンス用）
 type TestResult struct {
 	CaseIndex int     `json:"case_index"`
-	Status    string  `json:"status"` // "Pass" or "Fail"
+	Status    string  `json:"status"` // "Pass" | "Fail"
 	Stdout    string  `json:"stdout"`
 	Expected  string  `json:"expected"`
 	Stderr    string  `json:"stderr"`
@@ -18,11 +20,6 @@ type TestResult struct {
 
 // JudgeResponse はフロントエンドへ返すレスポンス全体
 type JudgeResponse struct {
-	Overall string       `json:"overall"` // "Pass" or "Fail"
+	Overall string       `json:"overall"` // "Pass" | "Fail"
 	Results []TestResult `json:"results"`
-}
-
-// SubmitRequest はフロントエンドから受け取るリクエスト
-type SubmitRequest struct {
-	Code string `json:"code"`
 }

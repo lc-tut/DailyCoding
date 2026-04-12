@@ -2,72 +2,122 @@ package usecase
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"strings"
+
+	"github.com/google/uuid"
 
 	"daileycoding/backend/internal/domain"
 )
 
-
 // Executor はコード実行エンジンの抽象インターフェース
-// Piston以外のエンジン（Judge0等）に差し替え可能にする
 type Executor interface {
 	Execute(ctx context.Context, req domain.ExecuteRequest) (domain.ExecuteResult, error)
 }
 
-// JudgeUsecase はコード採点のビジネスロジックを担う
-type JudgeUsecase struct {
-	executor  Executor
-	testCases []domain.TestCase
+// ProblemRepository は問題・テストケース取得に必要な操作を定義する
+type ProblemRepository interface {
+	GetTestCasesByProblemID(ctx context.Context, problemID uuid.UUID) ([]domain.TestCase, error)
 }
 
-func NewJudgeUsecase(executor Executor) *JudgeUsecase {
+// SubmissionRepository は提出結果の永続化に必要な操作を定義する
+type SubmissionRepository interface {
+	Save(ctx context.Context, params domain.CreateSubmissionParams, results []domain.CreateSubmissionResultParams) (*domain.Submission, error)
+}
+
+// JudgeUsecase はコード採点のビジネスロジックを担う
+type JudgeUsecase struct {
+	executor       Executor
+	problemRepo    ProblemRepository
+	submissionRepo SubmissionRepository
+}
+
+func NewJudgeUsecase(
+	executor Executor,
+	problemRepo ProblemRepository,
+	submissionRepo SubmissionRepository,
+) *JudgeUsecase {
 	return &JudgeUsecase{
-		executor: executor,
-		// テストケースはここにハードコード
-		// 将来はDBやファイルから読み込む想定
-		testCases: []domain.TestCase{
-			{Input: "2 3", Expected: "5"},
-			{Input: "10 20", Expected: "30"},
-		},
+		executor:       executor,
+		problemRepo:    problemRepo,
+		submissionRepo: submissionRepo,
 	}
 }
 
-// Judge は与えられたコードを全テストケースで実行し採点結果を返す
-func (u *JudgeUsecase) Judge(ctx context.Context, code string) (*domain.JudgeResponse, error) {
-	results := make([]domain.TestResult, 0, len(u.testCases))
-	overall := "Pass"
+// Judge はテストケースを DB から取得し、実行・採点・保存を行う
+func (u *JudgeUsecase) Judge(ctx context.Context, problemID uuid.UUID, code string) (*domain.JudgeResponse, error) {
+	// 1. テストケースを DB から取得
+	testCases, err := u.problemRepo.GetTestCasesByProblemID(ctx, problemID)
+	if err != nil {
+		return nil, fmt.Errorf("get test cases: %w", err)
+	}
+	if len(testCases) == 0 {
+		return nil, fmt.Errorf("no test cases found for problem %s", problemID)
+	}
 
-	for i, tc := range u.testCases {
+	// 2. 各テストケースを実行・採点
+	judgeResults := make([]domain.TestResult, 0, len(testCases))
+	resultParams := make([]domain.CreateSubmissionResultParams, 0, len(testCases))
+	overall := "Pass"
+	passedWeight, totalWeight := 0, 0
+
+	for _, tc := range testCases {
+		totalWeight += int(tc.ScoreWeight)
+
 		execResult, err := u.executor.Execute(ctx, domain.ExecuteRequest{
 			Code:     code,
 			Language: "python",
-			Stdin:    tc.Input,
+			Stdin:    tc.Stdin,
 		})
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("execute case %d: %w", tc.OrderIndex, err)
 		}
-
-		actual := strings.TrimSpace(execResult.Stdout)
-		expected := strings.TrimSpace(tc.Expected)
 
 		status := "Pass"
-		if actual != expected || execResult.Stderr != "" {
+		if strings.TrimSpace(execResult.Stdout) != strings.TrimSpace(tc.ExpectedStdout) || execResult.Stderr != "" {
 			status = "Fail"
 			overall = "Fail"
+		} else {
+			passedWeight += int(tc.ScoreWeight)
 		}
 
-		results = append(results, domain.TestResult{
-			CaseIndex: i + 1,
+		judgeResults = append(judgeResults, domain.TestResult{
+			CaseIndex: int(tc.OrderIndex),
 			Status:    status,
 			Stdout:    execResult.Stdout,
-			Expected:  tc.Expected,
+			Expected:  tc.ExpectedStdout,
 			Stderr:    execResult.Stderr,
 			TimeMs:    execResult.TimeMs,
 		})
+		resultParams = append(resultParams, domain.CreateSubmissionResultParams{
+			TestCaseID:      tc.ID,
+			Status:          status,
+			Stdout:          execResult.Stdout,
+			Stderr:          execResult.Stderr,
+			ExecutionTimeMs: float32(execResult.TimeMs),
+		})
+	}
+
+	// 3. スコア計算: floor(通過重み / 合計重み × 100)
+	score := int16(0)
+	if totalWeight > 0 {
+		score = int16(math.Floor(float64(passedWeight) / float64(totalWeight) * 100))
+	}
+
+	// 4. 提出をトランザクションで保存
+	if _, err = u.submissionRepo.Save(ctx, domain.CreateSubmissionParams{
+		ProblemID:     problemID,
+		Code:          code,
+		Language:      "python",
+		OverallStatus: overall,
+		Score:         score,
+	}, resultParams); err != nil {
+		return nil, fmt.Errorf("save submission: %w", err)
 	}
 
 	return &domain.JudgeResponse{
 		Overall: overall,
-		Results: results,
+		Results: judgeResults,
 	}, nil
 }

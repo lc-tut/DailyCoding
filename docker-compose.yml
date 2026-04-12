@@ -1,3 +1,19 @@
-# Piston は使用しない（Dockerを直接使用）
-# バックエンドはホストの Docker socket 経由でコンテナを起動する
-# 起動コマンド: mise run backend / mise run frontend
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: daileycoding
+      POSTGRES_USER: daileycoding
+      POSTGRES_PASSWORD: daileycoding
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U daileycoding -d daileycoding"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres-data:

@@ -3,6 +3,19 @@ go = "latest"
 node = "latest"
 pnpm = "latest"
 
+[tasks.db]
+description = "Start PostgreSQL 17 via Docker Compose"
+run = "docker compose up -d postgres"
+
+[tasks."db:migrate"]
+description = "Run pending migrations against the local DB"
+run = "go run ./cmd/migrate/main.go"
+dir = "backend"
+
+[tasks."db:reset"]
+description = "Drop all data, restart PostgreSQL, and re-run migrations"
+run = "docker compose down -v && docker compose up -d --wait postgres && (cd backend && go run ./cmd/migrate/main.go)"
+
 [tasks.backend]
 description = "Start Go API server (port 8080) — pulls python:3.14-slim on first run"
 run = "go run ./cmd/server/main.go"
