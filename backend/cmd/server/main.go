@@ -52,9 +52,10 @@ func main() {
 	}
 
 	// ── ユースケース / ハンドラー ──
-	judgeUsecase  := usecase.NewJudgeUsecase(executor, problemRepo, submissionRepo)
-	submitHandler := handler.NewSubmitHandler(judgeUsecase)
-	problemHandler := handler.NewProblemHandler(problemRepo)
+	judgeUsecase      := usecase.NewJudgeUsecase(executor, problemRepo, submissionRepo)
+	submitHandler     := handler.NewSubmitHandler(judgeUsecase)
+	problemHandler    := handler.NewProblemHandler(problemRepo)
+	submissionHandler := handler.NewSubmissionHandler(submissionRepo)
 
 	// ── Echo ルーター ──
 	e := echo.New()
@@ -62,13 +63,15 @@ func main() {
 	e.Use(middleware.RequestLogger())
 	e.Use(middleware.CORS(frontendOrigin))
 
-	e.GET("/api/problems",          problemHandler.List)
-	e.GET("/api/problems/today",    problemHandler.Today)
-	e.GET("/api/problems/:id",      problemHandler.GetByID)
-	e.POST("/api/problems",         problemHandler.Create)
-	e.PATCH("/api/problems/:id",    problemHandler.Update)
-	e.GET("/api/admin/problems",    problemHandler.ListAll)
-	e.POST("/api/submit",           submitHandler.Handle)
+	e.GET("/api/problems",                       problemHandler.List)
+	e.GET("/api/problems/today",                 problemHandler.Today)
+	e.GET("/api/problems/:id",                   problemHandler.GetByID)
+	e.POST("/api/problems",                      problemHandler.Create)
+	e.PATCH("/api/problems/:id",                 problemHandler.Update)
+	e.GET("/api/admin/problems",                 problemHandler.ListAll)
+	e.POST("/api/submit",                        submitHandler.Handle)
+	e.GET("/api/problems/:id/submissions",       submissionHandler.List)
+	e.GET("/api/submissions/:id",                submissionHandler.GetByID)
 
 	log.Printf("server starting on %s (image: %s)", addr, image)
 	if err := e.Start(addr); err != nil {

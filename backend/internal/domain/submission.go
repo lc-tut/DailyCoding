@@ -51,3 +51,34 @@ type CreateSubmissionResultParams struct {
 	Stderr          string
 	ExecutionTimeMs float32
 }
+
+// SubmissionSummary は一覧表示用の提出サマリ（コードを含まない）
+type SubmissionSummary struct {
+	ID            uuid.UUID
+	ProblemID     uuid.UUID
+	Language      string
+	OverallStatus string
+	Score         int16
+	CreatedAt     time.Time
+}
+
+// SubmissionResultWithCase は提出結果とテストケース情報をまとめた読み取り専用型
+// is_sample=false のとき Stdin / ExpectedStdout は空文字列
+type SubmissionResultWithCase struct {
+	ID              uuid.UUID
+	TestCaseID      uuid.UUID
+	OrderIndex      int16
+	IsSample        bool
+	Stdin           string
+	ExpectedStdout  string
+	Status          string
+	Stdout          string
+	Stderr          string
+	ExecutionTimeMs float32
+}
+
+// SubmissionDetail は提出詳細（コード＋テストケース結果付き）
+type SubmissionDetail struct {
+	Submission
+	Results []SubmissionResultWithCase
+}
