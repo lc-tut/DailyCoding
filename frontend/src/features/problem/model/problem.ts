@@ -2,36 +2,19 @@ export type Problem = {
   id: string;
   title: string;
   description: string; // Markdown
+  isActive: boolean;
+  publishedAt: string | null;
 };
 
-// MVP: 問題はハードコード。DB追加後はAPIから取得する想定
-export const currentProblem: Problem = {
-  id: "sum-two-numbers",
-  title: "二数の和",
-  description: `## 問題：二数の和
-
-標準入力から空白区切りで 2 つの整数を受け取り、その和を出力してください。
-
-### 入力形式
-
-\`\`\`
-A B
-\`\`\`
-
-### 出力形式
-
-\`\`\`
-A + B の値
-\`\`\`
-
-### サンプル
-
-| 入力 | 出力 |
-|------|------|
-| \`2 3\` | \`5\` |
-| \`10 20\` | \`30\` |
-`,
-};
+// isEffectivelyActive は published_at が当日以前の場合も公開済みとみなす
+export function isEffectivelyActive(p: Problem): boolean {
+  if (p.isActive) return true;
+  if (p.publishedAt) {
+    const today = new Date().toISOString().split("T")[0];
+    return p.publishedAt <= today;
+  }
+  return false;
+}
 
 export const initialCode = `a, b = map(int, input().split())
 print(a + b)

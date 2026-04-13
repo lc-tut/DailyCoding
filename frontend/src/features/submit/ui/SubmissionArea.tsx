@@ -2,13 +2,11 @@
 
 import dynamic from "next/dynamic";
 import { useState } from "react";
-import Button from "@/components/ui/Button";
+import { Button } from "@/components/ui/button";
 import ResultPanel from "./ResultPanel";
 import { submitCode } from "../api/submitCode";
 import type { JudgeResponse } from "../api/submitCode";
-import styles from "./SubmissionArea.module.css";
 
-// CodeMirror は SSR 非対応のため dynamic import でクライアント専用にする
 const CodeEditor = dynamic(
   () => import("@/features/editor/ui/CodeEditor"),
   { ssr: false }
@@ -16,9 +14,10 @@ const CodeEditor = dynamic(
 
 type Props = {
   initialCode: string;
+  problemId: string;
 };
 
-export default function SubmissionArea({ initialCode }: Props) {
+export default function SubmissionArea({ initialCode, problemId }: Props) {
   const [code, setCode] = useState(initialCode);
   const [response, setResponse] = useState<JudgeResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -29,7 +28,7 @@ export default function SubmissionArea({ initialCode }: Props) {
     setError(null);
     setResponse(null);
     try {
-      const data = await submitCode(code);
+      const data = await submitCode(code, problemId);
       setResponse(data);
     } catch (e) {
       setError(e instanceof Error ? e.message : "不明なエラー");
@@ -39,23 +38,25 @@ export default function SubmissionArea({ initialCode }: Props) {
   };
 
   return (
-    <div className={styles.wrapper}>
+    <div className="flex-1 flex flex-col overflow-hidden">
       {/* エディタ */}
-      <section className={styles.editorSection}>
-        <div className={styles.sectionHeader}>コード（Python）</div>
-        <div className={styles.editorBody}>
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="text-xs font-semibold uppercase tracking-widest text-[var(--color-overlay0)] px-4 py-2 bg-[var(--color-mantle)] border-b border-[var(--color-surface0)] shrink-0">
+          コード（Python）
+        </div>
+        <div className="flex-1 overflow-hidden">
           <CodeEditor value={code} onChange={setCode} />
         </div>
-      </section>
+      </div>
 
       {/* 提出・結果エリア */}
-      <footer className={styles.footer}>
-        <Button onClick={handleSubmit} loading={loading}>
-          提出
+      <footer className="flex items-start gap-4 flex-wrap px-4 py-3 bg-[var(--color-mantle)] border-t border-[var(--color-surface0)] shrink-0">
+        <Button onClick={handleSubmit} disabled={loading}>
+          {loading ? "実行中..." : "提出"}
         </Button>
 
         {error && (
-          <div className={styles.errorBox}>
+          <div className="text-xs text-[var(--color-red)] px-3 py-1.5 bg-[color-mix(in_srgb,var(--color-red)_12%,transparent)] border border-[var(--color-red)] rounded">
             <strong>エラー:</strong> {error}
           </div>
         )}
