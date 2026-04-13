@@ -62,9 +62,13 @@ func main() {
 	e.Use(middleware.RequestLogger())
 	e.Use(middleware.CORS(frontendOrigin))
 
-	e.GET("/api/problems",  problemHandler.List)
-	e.POST("/api/problems", problemHandler.Create)
-	e.POST("/api/submit",   submitHandler.Handle)
+	e.GET("/api/problems",          problemHandler.List)
+	e.GET("/api/problems/today",    problemHandler.Today)
+	e.GET("/api/problems/:id",      problemHandler.GetByID)
+	e.POST("/api/problems",         problemHandler.Create)
+	e.PATCH("/api/problems/:id",    problemHandler.Update)
+	e.GET("/api/admin/problems",    problemHandler.ListAll)
+	e.POST("/api/submit",           submitHandler.Handle)
 
 	log.Printf("server starting on %s (image: %s)", addr, image)
 	if err := e.Start(addr); err != nil {

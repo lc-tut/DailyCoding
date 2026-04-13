@@ -19,12 +19,14 @@ func NewProblemRepository(db *pgxpool.Pool) *ProblemRepository {
 	return &ProblemRepository{db: db}
 }
 
-// ListActive はアクティブな問題を公開日の降順で返す
+// ListActive はアクティブな問題を公開日の降順で返す。
+// is_active=true のものに加え、published_at が当日以前の問題も自動的に含む。
 func (r *ProblemRepository) ListActive(ctx context.Context) ([]domain.Problem, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT id, title, description, is_active, published_at, created_at, updated_at
 		FROM   problems
 		WHERE  is_active = true
+		   OR  (published_at IS NOT NULL AND published_at <= CURRENT_DATE)
 		ORDER  BY published_at DESC NULLS LAST, created_at DESC
 	`)
 	if err != nil {
@@ -50,6 +52,146 @@ func (r *ProblemRepository) ListActive(ctx context.Context) ([]domain.Problem, e
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// Update は問題のタイトル・説明・公開設定を更新する（テストケースは変更しない）
+func (r *ProblemRepository) Update(ctx context.Context, id uuid.UUID, params domain.UpdateProblemParams) (*domain.Problem, error) {
+	var p domain.Problem
+	var idStr string
+	err := r.db.QueryRow(ctx, `
+		UPDATE problems
+		SET    title        = $2,
+		       description  = $3,
+		       is_active    = $4,
+		       published_at = $5,
+		       updated_at   = NOW()
+		WHERE  id = $1
+		RETURNING id, title, description, is_active, published_at, created_at, updated_at
+	`, id, params.Title, params.Description, params.IsActive, params.PublishedAt).Scan(
+		&idStr, &p.Title, &p.Description,
+		&p.IsActive, &p.PublishedAt,
+		&p.CreatedAt, &p.UpdatedAt,
+	)
+	if err != nil {
+		if err.Error() == "no rows in result set" {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("update problem: %w", err)
+	}
+	p.ID, err = uuid.Parse(idStr)
+	if err != nil {
+		return nil, fmt.Errorf("parse problem id: %w", err)
+	}
+	return &p, nil
+}
+
+// GetByID は指定した ID の問題を1件返す。存在しない場合は nil, nil を返す
+func (r *ProblemRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Problem, error) {
+	var p domain.Problem
+	var idStr string
+	err := r.db.QueryRow(ctx, `
+		SELECT id, title, description, is_active, published_at, created_at, updated_at
+		FROM   problems
+		WHERE  id = $1
+	`, id).Scan(
+		&idStr, &p.Title, &p.Description,
+		&p.IsActive, &p.PublishedAt,
+		&p.CreatedAt, &p.UpdatedAt,
+	)
+	if err != nil {
+		if err.Error() == "no rows in result set" {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("query problem by id: %w", err)
+	}
+	p.ID, err = uuid.Parse(idStr)
+	if err != nil {
+		return nil, fmt.Errorf("parse problem id: %w", err)
+	}
+	return &p, nil
+}
+
+// ListAll は管理画面用に全問題を返す。params で絞込・並び替えが可能。
+func (r *ProblemRepository) ListAll(ctx context.Context, params domain.ListAllParams) ([]domain.Problem, error) {
+	// 絞込条件（値はコード側で決定するため SQL インジェクションリスクなし）
+	where := ""
+	switch params.Filter {
+	case "active":
+		where = "WHERE is_active = true OR (published_at IS NOT NULL AND published_at <= CURRENT_DATE)"
+	case "inactive":
+		where = "WHERE NOT (is_active = true OR (published_at IS NOT NULL AND published_at <= CURRENT_DATE))"
+	case "undated":
+		where = "WHERE published_at IS NULL"
+	case "inactive_undated":
+		where = "WHERE is_active = false AND published_at IS NULL"
+	}
+
+	// 並び替え
+	orderBy := "ORDER BY created_at DESC"
+	switch params.Sort {
+	case "published":
+		orderBy = "ORDER BY published_at DESC NULLS LAST, created_at DESC"
+	case "title":
+		orderBy = "ORDER BY title ASC"
+	}
+
+	//nolint:gosec // where/orderBy はコード側で決定済みの固定文字列
+	rows, err := r.db.Query(ctx, `
+		SELECT id, title, description, is_active, published_at, created_at, updated_at
+		FROM   problems
+		`+where+`
+		`+orderBy)
+	if err != nil {
+		return nil, fmt.Errorf("query all problems: %w", err)
+	}
+	defer rows.Close()
+
+	var out []domain.Problem
+	for rows.Next() {
+		var p domain.Problem
+		var idStr string
+		if err := rows.Scan(
+			&idStr, &p.Title, &p.Description,
+			&p.IsActive, &p.PublishedAt,
+			&p.CreatedAt, &p.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan problem: %w", err)
+		}
+		p.ID, err = uuid.Parse(idStr)
+		if err != nil {
+			return nil, fmt.Errorf("parse problem id: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// GetToday は JST 当日の published_at を持つアクティブな問題を1件返す。
+// 該当なしの場合は nil, nil を返す
+func (r *ProblemRepository) GetToday(ctx context.Context, today string) (*domain.Problem, error) {
+	var p domain.Problem
+	var idStr string
+	err := r.db.QueryRow(ctx, `
+		SELECT id, title, description, is_active, published_at, created_at, updated_at
+		FROM   problems
+		WHERE  published_at = $1
+		LIMIT  1
+	`, today).Scan(
+		&idStr, &p.Title, &p.Description,
+		&p.IsActive, &p.PublishedAt,
+		&p.CreatedAt, &p.UpdatedAt,
+	)
+	if err != nil {
+		if err.Error() == "no rows in result set" {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("query today problem: %w", err)
+	}
+	p.ID, err = uuid.Parse(idStr)
+	if err != nil {
+		return nil, fmt.Errorf("parse problem id: %w", err)
+	}
+	return &p, nil
 }
 
 // Create は問題とテストケースをトランザクションで一括登録する

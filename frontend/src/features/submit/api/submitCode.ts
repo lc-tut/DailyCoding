@@ -1,3 +1,5 @@
+import { API_BASE } from "@/shared/config/api";
+
 export type TestResult = {
   case_index: number;
   status: "Pass" | "Fail";
@@ -12,13 +14,11 @@ export type JudgeResponse = {
   results: TestResult[];
 };
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8080";
-
-export async function submitCode(code: string): Promise<JudgeResponse> {
+export async function submitCode(code: string, problemId: string): Promise<JudgeResponse> {
   const res = await fetch(`${API_BASE}/api/submit`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ code }),
+    body: JSON.stringify({ code, problem_id: problemId }),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => String(res.status));

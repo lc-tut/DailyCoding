@@ -1,36 +1,54 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Problem } from "../model/problem";
-import styles from "./ProblemPanel.module.css";
 
 type Props = {
   problem: Problem;
 };
 
-// サーバーコンポーネント: 静的な問題文を SSR でレンダリングする
 export default function ProblemPanel({ problem }: Props) {
   return (
-    <section className={styles.panel}>
-      <div className={styles.header}>問題</div>
-      <div className={styles.body}>
+    <section className="flex flex-col w-[40%] border-r border-[var(--color-surface0)] overflow-y-auto shrink-0">
+      <div className="text-xs font-semibold uppercase tracking-widest text-[var(--color-overlay0)] px-4 py-2 bg-[var(--color-mantle)] border-b border-[var(--color-surface0)]">
+        問題
+      </div>
+      <div className="p-4 leading-7 text-sm text-[var(--color-text)]">
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           components={{
-            h2: ({ children }) => <h2 className={styles.h2}>{children}</h2>,
-            h3: ({ children }) => <h3 className={styles.h3}>{children}</h3>,
-            p: ({ children }) => <p className={styles.p}>{children}</p>,
+            h2: ({ children }) => (
+              <h2 className="text-base font-bold text-[var(--color-mauve)] mb-3">{children}</h2>
+            ),
+            h3: ({ children }) => (
+              <h3 className="text-sm font-semibold text-[var(--color-blue)] mt-4 mb-1.5">{children}</h3>
+            ),
+            p: ({ children }) => (
+              <p className="mb-2 text-[var(--color-text)]">{children}</p>
+            ),
             code: ({ children, className }) => {
               const isBlock = className?.startsWith("language-");
               return isBlock ? (
-                <pre className={styles.pre}>
+                <pre className="bg-[var(--color-mantle)] border border-[var(--color-surface0)] rounded px-3 py-2 my-1.5 font-mono text-xs text-[var(--color-green)] overflow-x-auto">
                   <code>{children}</code>
                 </pre>
               ) : (
-                <code className={styles.inlineCode}>{children}</code>
+                <code className="bg-[var(--color-surface0)] rounded px-1 py-px font-mono text-xs text-[var(--color-red)]">
+                  {children}
+                </code>
               );
             },
             table: ({ children }) => (
-              <table className={styles.table}>{children}</table>
+              <table className="border-collapse text-xs my-2 w-auto">{children}</table>
+            ),
+            th: ({ children }) => (
+              <th className="border border-[var(--color-surface0)] bg-[var(--color-mantle)] px-3 py-1 text-[var(--color-blue)]">
+                {children}
+              </th>
+            ),
+            td: ({ children }) => (
+              <td className="border border-[var(--color-surface0)] px-3 py-1 text-[var(--color-text)]">
+                {children}
+              </td>
             ),
           }}
         >
