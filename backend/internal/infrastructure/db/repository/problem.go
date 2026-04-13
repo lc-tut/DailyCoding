@@ -56,6 +56,20 @@ func (r *ProblemRepository) ListActive(ctx context.Context) ([]domain.Problem, e
 
 // Update は問題のタイトル・説明・公開設定を更新する（テストケースは変更しない）
 func (r *ProblemRepository) Update(ctx context.Context, id uuid.UUID, params domain.UpdateProblemParams) (*domain.Problem, error) {
+	// 公開日の重複チェック（自分以外の問題と被っていないか）
+	if params.PublishedAt != nil {
+		var count int
+		if err := r.db.QueryRow(ctx,
+			`SELECT COUNT(*) FROM problems WHERE published_at = $1 AND id != $2`,
+			params.PublishedAt, id,
+		).Scan(&count); err != nil {
+			return nil, fmt.Errorf("check date conflict: %w", err)
+		}
+		if count > 0 {
+			return nil, domain.ErrDateConflict
+		}
+	}
+
 	var p domain.Problem
 	var idStr string
 	err := r.db.QueryRow(ctx, `
@@ -196,6 +210,20 @@ func (r *ProblemRepository) GetToday(ctx context.Context, today string) (*domain
 
 // Create は問題とテストケースをトランザクションで一括登録する
 func (r *ProblemRepository) Create(ctx context.Context, params domain.CreateProblemParams) (*domain.Problem, error) {
+	// 公開日の重複チェック
+	if params.PublishedAt != nil {
+		var count int
+		if err := r.db.QueryRow(ctx,
+			`SELECT COUNT(*) FROM problems WHERE published_at = $1`,
+			params.PublishedAt,
+		).Scan(&count); err != nil {
+			return nil, fmt.Errorf("check date conflict: %w", err)
+		}
+		if count > 0 {
+			return nil, domain.ErrDateConflict
+		}
+	}
+
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)

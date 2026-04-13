@@ -1,10 +1,14 @@
 package domain
 
 import (
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// ErrDateConflict は published_at が他の問題と重複するときに返す
+var ErrDateConflict = errors.New("another problem already has this published_at date")
 
 // Problem は problems テーブルのエンティティ
 type Problem struct {

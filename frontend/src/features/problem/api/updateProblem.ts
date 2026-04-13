@@ -25,8 +25,9 @@ export async function updateProblem(
     body: JSON.stringify(input),
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => String(res.status));
-    throw new Error(`問題の更新に失敗しました: ${text}`);
+    const body = await res.json().catch(() => null);
+    const msg = body?.error ?? `ステータス ${res.status}`;
+    throw new Error(msg);
   }
   return res.json() as Promise<UpdateProblemResponse>;
 }

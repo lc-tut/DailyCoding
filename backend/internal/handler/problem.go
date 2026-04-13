@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -163,6 +164,9 @@ func (h *ProblemHandler) Create(c *echo.Context) error {
 		TestCases:   tcParams,
 	})
 	if err != nil {
+		if errors.Is(err, domain.ErrDateConflict) {
+			return c.JSON(http.StatusConflict, map[string]any{"error": "この日付はすでに別の問題に使用されています"})
+		}
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
 	return c.JSON(http.StatusCreated, toProblemResponse(*p))
@@ -207,6 +211,9 @@ func (h *ProblemHandler) Update(c *echo.Context) error {
 		PublishedAt: publishedAt,
 	})
 	if err != nil {
+		if errors.Is(err, domain.ErrDateConflict) {
+			return c.JSON(http.StatusConflict, map[string]any{"error": "この日付はすでに別の問題に使用されています"})
+		}
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
 	if p == nil {
