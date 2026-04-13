@@ -22,7 +22,7 @@ export default async function ProblemPage({ params }: Props) {
 
   return (
     <>
-      <ProblemPanel problem={problem} />
+      <ProblemPanel problem={problem} submissionsHref={`/problems/${id}/submissions`} />
       <SubmissionArea initialCode={initialCode} problemId={problem.id} />
     </>
   );
