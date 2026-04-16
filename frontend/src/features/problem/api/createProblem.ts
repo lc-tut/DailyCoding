@@ -31,6 +31,7 @@ export async function createProblem(
   const res = await fetch(`${API_BASE}/api/problems`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    credentials: "include",
     body: JSON.stringify(input),
   });
   if (!res.ok) {

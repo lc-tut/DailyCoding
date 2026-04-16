@@ -22,6 +22,7 @@ export async function updateProblem(
   const res = await fetch(`${API_BASE}/api/problems/${id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
+    credentials: "include",
     body: JSON.stringify(input),
   });
   if (!res.ok) {

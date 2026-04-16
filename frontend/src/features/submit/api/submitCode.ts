@@ -18,6 +18,7 @@ export async function submitCode(code: string, problemId: string): Promise<Judge
   const res = await fetch(`${API_BASE}/api/submit`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    credentials: "include",
     body: JSON.stringify({ code, problem_id: problemId }),
   });
   if (!res.ok) {
