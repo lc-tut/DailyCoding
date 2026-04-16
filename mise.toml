@@ -18,10 +18,12 @@ run = "docker compose down -v && docker compose up -d --wait postgres && (cd bac
 
 [tasks.backend]
 description = "Start Go API server (port 8080) — pulls python:3.14-slim on first run"
+env = {_.file = "backend/.env"}
 run = "go run ./cmd/server/main.go"
 dir = "backend"
 
 [tasks.frontend]
 description = "Start Next.js dev server (port 3000)"
+env = {_.file = "frontend/.env"}
 run = "pnpm dev"
 dir = "frontend"

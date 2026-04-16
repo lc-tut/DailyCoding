@@ -111,8 +111,24 @@ func setSessionCookie(c *echo.Context, value string, maxAge int) {
 
 // --- ルートハンドラー ---
 
+// Providers GET /api/auth/providers — 利用可能なプロバイダー名一覧を返す
+func (h *AuthHandler) Providers(c *echo.Context) error {
+	if h.bypass {
+		return c.JSON(http.StatusOK, map[string]any{"providers": []string{}})
+	}
+	names := make([]string, 0, len(h.providers))
+	for name := range h.providers {
+		names = append(names, name)
+	}
+	return c.JSON(http.StatusOK, map[string]any{"providers": names})
+}
+
 // Redirect GET /api/auth/:provider — OAuth2 認可画面へリダイレクト
 func (h *AuthHandler) Redirect(c *echo.Context) error {
+	if h.bypass {
+		return c.Redirect(http.StatusFound, h.frontendURL)
+	}
+
 	providerName := c.Param("provider")
 	p, ok := h.providers[providerName]
 	if !ok {

@@ -75,9 +75,9 @@ func main() {
 	e.Use(corsMiddleware(frontendOrigin))
 
 	// ── 認証ルート（認証不要）──
+	e.GET("/api/auth/providers",          authHandler.Providers)
 	e.GET("/api/auth/:provider",          authHandler.Redirect)
 	e.GET("/api/auth/:provider/callback", authHandler.Callback)
-	e.GET("/api/auth/me",                 authHandler.Me)
 	e.POST("/api/auth/logout",            authHandler.Logout)
 
 	// ── 公開ルート ──
@@ -89,6 +89,11 @@ func main() {
 
 	// ── 認証必須ルート ──
 	authRequired := appmw.Required(jwtSecret, bypass)
+
+	// /api/auth/me は JWT を検証してユーザー情報を返す（未認証なら 401）
+	me := e.Group("")
+	me.Use(authRequired)
+	me.GET("/api/auth/me", authHandler.Me)
 
 	protected := e.Group("")
 	protected.Use(authRequired)

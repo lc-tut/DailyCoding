@@ -1,20 +1,32 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { useUser } from "@/shared/providers/UserProvider";
 import { API_BASE } from "@/shared/config/api";
 
+const PROVIDER_LABELS: Record<string, string> = {
+  google: "Google",
+  keycloak: "Keycloak",
+};
+
 export default function Header() {
   const user = useUser();
-  const router = useRouter();
+  const [providers, setProviders] = useState<string[]>([]);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/auth/providers`, { credentials: "include" })
+      .then((res) => (res.ok ? res.json() : { providers: [] }))
+      .then((data) => setProviders(data.providers ?? []))
+      .catch(() => setProviders([]));
+  }, []);
 
   const handleLogout = async () => {
     await fetch(`${API_BASE}/api/auth/logout`, {
       method: "POST",
       credentials: "include",
     });
-    router.refresh();
+    window.location.href = "/";
   };
 
   return (
@@ -73,12 +85,15 @@ export default function Header() {
             </button>
           </>
         ) : (
-          <a
-            href={`${API_BASE}/api/auth/google`}
-            className="text-xs px-3 py-1 rounded bg-[var(--color-mauve)] text-[var(--color-base)] hover:opacity-80 transition-opacity font-semibold"
-          >
-            Google でログイン
-          </a>
+          providers.map((provider) => (
+            <a
+              key={provider}
+              href={`${API_BASE}/api/auth/${provider}`}
+              className="text-xs px-3 py-1 rounded bg-[var(--color-mauve)] text-[var(--color-base)] hover:opacity-80 transition-opacity font-semibold"
+            >
+              {PROVIDER_LABELS[provider] ?? provider} でログイン
+            </a>
+          ))
         )}
       </div>
     </header>
