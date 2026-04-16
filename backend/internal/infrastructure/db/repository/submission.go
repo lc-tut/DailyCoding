@@ -36,12 +36,12 @@ func (r *SubmissionRepository) Save(
 	var s domain.Submission
 	var idStr string
 	err = tx.QueryRow(ctx, `
-		INSERT INTO submissions (problem_id, code, language, overall_status, score)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO submissions (user_id, problem_id, code, language, overall_status, score)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, user_id, problem_id, code, language, overall_status, score, ai_review,
 		          created_at, updated_at
 	`,
-		params.ProblemID, params.Code, params.Language,
+		params.UserID, params.ProblemID, params.Code, params.Language,
 		params.OverallStatus, params.Score,
 	).Scan(
 		&idStr,

@@ -3,25 +3,31 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
 	"time"
 
 	"github.com/labstack/echo/v5"
-	"github.com/labstack/echo/v5/middleware"
+	echomw "github.com/labstack/echo/v5/middleware"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 
 	"daileycoding/backend/internal/handler"
 	dockerexec "daileycoding/backend/internal/infrastructure/docker"
 	"daileycoding/backend/internal/infrastructure/db"
 	"daileycoding/backend/internal/infrastructure/db/repository"
+	appmw "daileycoding/backend/internal/middleware"
 	"daileycoding/backend/internal/usecase"
 )
 
 func main() {
-	image         := getEnv("PYTHON_IMAGE",    "python:3.14-slim")
-	addr          := getEnv("ADDR",            ":8080")
-	frontendOrigin := getEnv("FRONTEND_ORIGIN", "http://localhost:3000")
-	dsn           := getEnv("DATABASE_URL",
+	image          := getEnv("PYTHON_IMAGE",     "python:3.14-slim")
+	addr           := getEnv("ADDR",             ":8080")
+	frontendOrigin := getEnv("FRONTEND_ORIGIN",  "http://localhost:3000")
+	dsn            := getEnv("DATABASE_URL",
 		"postgresql://daileycoding:daileycoding@localhost:5432/daileycoding?sslmode=disable")
+	jwtSecret      := []byte(getEnv("JWT_SECRET", "dev-secret-change-in-production"))
+	bypass         := getEnv("AUTH_BYPASS", "") == "true"
 
 	// ── DB マイグレーション ──
 	log.Println("running migrations...")
@@ -39,6 +45,7 @@ func main() {
 	// ── リポジトリ ──
 	problemRepo    := repository.NewProblemRepository(pool)
 	submissionRepo := repository.NewSubmissionRepository(pool)
+	userRepo       := repository.NewUserRepository(pool)
 
 	// ── コード実行エンジン ──
 	executor, err := dockerexec.NewExecutor(image)
@@ -51,31 +58,109 @@ func main() {
 		log.Fatalf("ensure image: %v", err)
 	}
 
+	// ── OAuth2 プロバイダー設定 ──
+	providers := buildProviders(frontendOrigin)
+
 	// ── ユースケース / ハンドラー ──
 	judgeUsecase      := usecase.NewJudgeUsecase(executor, problemRepo, submissionRepo)
 	submitHandler     := handler.NewSubmitHandler(judgeUsecase)
 	problemHandler    := handler.NewProblemHandler(problemRepo)
 	submissionHandler := handler.NewSubmissionHandler(submissionRepo)
+	authHandler       := handler.NewAuthHandler(userRepo, jwtSecret, providers, frontendOrigin, bypass)
 
 	// ── Echo ルーター ──
 	e := echo.New()
-	e.Use(middleware.Recover())
-	e.Use(middleware.RequestLogger())
-	e.Use(middleware.CORS(frontendOrigin))
+	e.Use(echomw.Recover())
+	e.Use(echomw.RequestLogger())
+	e.Use(corsMiddleware(frontendOrigin))
 
-	e.GET("/api/problems",                       problemHandler.List)
-	e.GET("/api/problems/today",                 problemHandler.Today)
-	e.GET("/api/problems/:id",                   problemHandler.GetByID)
-	e.POST("/api/problems",                      problemHandler.Create)
-	e.PATCH("/api/problems/:id",                 problemHandler.Update)
-	e.GET("/api/admin/problems",                 problemHandler.ListAll)
-	e.POST("/api/submit",                        submitHandler.Handle)
-	e.GET("/api/problems/:id/submissions",       submissionHandler.List)
-	e.GET("/api/submissions/:id",                submissionHandler.GetByID)
+	// ── 認証ルート（認証不要）──
+	e.GET("/api/auth/:provider",          authHandler.Redirect)
+	e.GET("/api/auth/:provider/callback", authHandler.Callback)
+	e.GET("/api/auth/me",                 authHandler.Me)
+	e.POST("/api/auth/logout",            authHandler.Logout)
 
-	log.Printf("server starting on %s (image: %s)", addr, image)
+	// ── 公開ルート ──
+	e.GET("/api/problems",                 problemHandler.List)
+	e.GET("/api/problems/today",           problemHandler.Today)
+	e.GET("/api/problems/:id",             problemHandler.GetByID)
+	e.GET("/api/problems/:id/submissions", submissionHandler.List)
+	e.GET("/api/submissions/:id",          submissionHandler.GetByID)
+
+	// ── 認証必須ルート ──
+	authRequired := appmw.Required(jwtSecret, bypass)
+
+	protected := e.Group("")
+	protected.Use(authRequired)
+	protected.POST("/api/problems",      problemHandler.Create)
+	protected.PATCH("/api/problems/:id", problemHandler.Update)
+	protected.POST("/api/submit",        submitHandler.Handle)
+
+	// ── admin 限定ルート ──
+	admin := e.Group("")
+	admin.Use(authRequired)
+	admin.Use(appmw.AdminRequired())
+	admin.GET("/api/admin/problems", problemHandler.ListAll)
+
+	log.Printf("server starting on %s (image: %s, bypass=%v)", addr, image, bypass)
 	if err := e.Start(addr); err != nil {
 		log.Fatalf("server error: %v", err)
+	}
+}
+
+// buildProviders は利用可能な OAuth2 プロバイダーを設定する。
+// 環境変数が未設定のプロバイダーはスキップされる。
+func buildProviders(frontendOrigin string) []*handler.ProviderConfig {
+	var providers []*handler.ProviderConfig
+
+	if clientID := os.Getenv("GOOGLE_CLIENT_ID"); clientID != "" {
+		providers = append(providers, &handler.ProviderConfig{
+			Name: "google",
+			OAuth2: &oauth2.Config{
+				ClientID:     clientID,
+				ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
+				RedirectURL:  os.Getenv("GOOGLE_CALLBACK_URL"),
+				Scopes:       []string{"openid", "email", "profile"},
+				Endpoint:     google.Endpoint,
+			},
+			UserinfoURL: "https://openidconnect.googleapis.com/v1/userinfo",
+		})
+	}
+
+	if clientID := os.Getenv("KEYCLOAK_CLIENT_ID"); clientID != "" {
+		issuer := os.Getenv("KEYCLOAK_ISSUER") // 例: http://keycloak:8080/realms/daileycoding
+		providers = append(providers, &handler.ProviderConfig{
+			Name: "keycloak",
+			OAuth2: &oauth2.Config{
+				ClientID:     clientID,
+				ClientSecret: os.Getenv("KEYCLOAK_CLIENT_SECRET"),
+				RedirectURL:  os.Getenv("KEYCLOAK_CALLBACK_URL"),
+				Scopes:       []string{"openid", "email", "profile"},
+				Endpoint: oauth2.Endpoint{
+					AuthURL:  issuer + "/protocol/openid-connect/auth",
+					TokenURL: issuer + "/protocol/openid-connect/token",
+				},
+			},
+			UserinfoURL: issuer + "/protocol/openid-connect/userinfo",
+		})
+	}
+
+	return providers
+}
+
+// corsMiddleware は credentials を許可した CORS ヘッダーを設定する
+func corsMiddleware(allowOrigin string) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c *echo.Context) error {
+			(*c).Response().Header().Set("Access-Control-Allow-Origin", allowOrigin)
+			(*c).Response().Header().Set("Access-Control-Allow-Credentials", "true")
+			(*c).Response().Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			(*c).Response().Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			if (*c).Request().Method == http.MethodOptions {
+				return (*c).NoContent(http.StatusNoContent)
+			}
+			return next(c)
+		}
 	}
 }
 
