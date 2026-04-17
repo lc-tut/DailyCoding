@@ -8,7 +8,6 @@ import (
 	"github.com/labstack/echo/v5"
 
 	"daileycoding/backend/internal/domain"
-	"daileycoding/backend/internal/handler"
 )
 
 const contextUserKey = "auth_user"
@@ -33,7 +32,7 @@ func Required(jwtSecret []byte, bypass bool) echo.MiddlewareFunc {
 				return (*c).JSON(http.StatusUnauthorized, map[string]any{"error": "not authenticated"})
 			}
 
-			claims := &handler.AppClaims{}
+			claims := &domain.AppClaims{}
 			token, err := jwt.ParseWithClaims(cookie.Value, claims, func(t *jwt.Token) (any, error) {
 				if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 					return nil, jwt.ErrSignatureInvalid

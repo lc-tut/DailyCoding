@@ -4,59 +4,51 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
-	"fmt"
-	"io"
+	"errors"
 	"net/http"
-	"time"
 
-	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v5"
 	"golang.org/x/oauth2"
 
 	"daileycoding/backend/internal/domain"
+	"daileycoding/backend/internal/usecase"
 )
 
 const (
-	cookieName    = "dc_session"
-	stateCookie   = "dc_oauth_state"
-	cookieMaxAge  = 24 * 60 * 60 // 24 時間 (秒)
+	cookieName   = "dc_session"
+	stateCookie  = "dc_oauth_state"
+	nonceCookie  = "dc_oauth_nonce"
+	cookieMaxAge = 24 * 60 * 60 // 24 時間 (秒)
 )
 
-type userRepo interface {
-	GetByID(ctx context.Context, id uuid.UUID) (*domain.User, error)
-	UpsertWithIdentity(ctx context.Context, email, name, provider, providerSub string) (*domain.User, error)
+// OIDCVerifier は ID Token を検証し OIDCClaims を返すインターフェース。
+// infrastructure/oidc.Verifier が実装する。
+type OIDCVerifier interface {
+	Verify(ctx context.Context, rawIDToken, expectedNonce string) (*domain.OIDCClaims, error)
 }
 
-// ProviderConfig は OAuth2 プロバイダー設定をまとめた型
+// ProviderConfig は OAuth2 / OIDC プロバイダーの HTTP レベル設定
 type ProviderConfig struct {
-	Name     string        // "google" | "keycloak"
+	Name     string
 	OAuth2   *oauth2.Config
-	UserinfoURL string     // ユーザー情報取得エンドポイント
+	Verifier OIDCVerifier
 }
 
-// AppClaims は アプリ独自 JWT のペイロード
-type AppClaims struct {
-	UserID string `json:"uid"`
-	Email  string `json:"email"`
-	Name   string `json:"name"`
-	Role   string `json:"role"`
-	jwt.RegisteredClaims
+// authUsecase は AuthHandler が依存するユースケースのインターフェース
+type authUsecase interface {
+	ProcessLogin(ctx context.Context, provider string, claims *domain.OIDCClaims) (string, error)
 }
 
-// AuthHandler は認証フロー全体を担う
+// AuthHandler は認証フローの HTTP 層を担う。ビジネスロジックは usecase に委譲する。
 type AuthHandler struct {
-	userRepo    userRepo
-	jwtSecret   []byte
+	usecase     authUsecase
 	providers   map[string]*ProviderConfig
 	frontendURL string
-	bypass      bool // AUTH_BYPASS=true のとき真
+	bypass      bool
 }
 
 func NewAuthHandler(
-	repo userRepo,
-	jwtSecret []byte,
+	uc *usecase.AuthUsecase,
 	providers []*ProviderConfig,
 	frontendURL string,
 	bypass bool,
@@ -66,52 +58,14 @@ func NewAuthHandler(
 		pm[p.Name] = p
 	}
 	return &AuthHandler{
-		userRepo:    repo,
-		jwtSecret:   jwtSecret,
+		usecase:     uc,
 		providers:   pm,
 		frontendURL: frontendURL,
 		bypass:      bypass,
 	}
 }
 
-// --- ヘルパー ---
-
-func randomState() (string, error) {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return base64.URLEncoding.EncodeToString(b), nil
-}
-
-func (h *AuthHandler) issueToken(user *domain.User) (string, error) {
-	claims := AppClaims{
-		UserID: user.ID.String(),
-		Email:  user.Email,
-		Name:   user.Name,
-		Role:   user.Role,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-		},
-	}
-	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(h.jwtSecret)
-}
-
-func setSessionCookie(c *echo.Context, value string, maxAge int) {
-	cookie := new(http.Cookie)
-	cookie.Name = cookieName
-	cookie.Value = value
-	cookie.HttpOnly = true
-	cookie.Path = "/"
-	cookie.MaxAge = maxAge
-	cookie.SameSite = http.SameSiteLaxMode
-	(*c).SetCookie(cookie)
-}
-
-// --- ルートハンドラー ---
-
-// Providers GET /api/auth/providers — 利用可能なプロバイダー名一覧を返す
+// Providers GET /api/auth/providers
 func (h *AuthHandler) Providers(c *echo.Context) error {
 	if h.bypass {
 		return c.JSON(http.StatusOK, map[string]any{"providers": []string{}})
@@ -123,86 +77,87 @@ func (h *AuthHandler) Providers(c *echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]any{"providers": names})
 }
 
-// Redirect GET /api/auth/:provider — OAuth2 認可画面へリダイレクト
+// Redirect GET /api/auth/:provider — state・nonce を発行して認可画面へリダイレクト
 func (h *AuthHandler) Redirect(c *echo.Context) error {
 	if h.bypass {
 		return c.Redirect(http.StatusFound, h.frontendURL)
 	}
 
-	providerName := c.Param("provider")
-	p, ok := h.providers[providerName]
-	if !ok {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": "unknown provider: " + providerName})
+	p, err := h.lookupProvider(c)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
 
-	state, err := randomState()
+	state, err := randomToken()
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": "generate state"})
 	}
+	nonce, err := randomToken()
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": "generate nonce"})
+	}
 
-	// state を短命 Cookie に保存（CSRF 対策）
-	sc := new(http.Cookie)
-	sc.Name = stateCookie
-	sc.Value = state
-	sc.HttpOnly = true
-	sc.Path = "/"
-	sc.MaxAge = 600 // 10 分
-	sc.SameSite = http.SameSiteLaxMode
-	c.SetCookie(sc)
+	setTempCookie(c, stateCookie, state)
+	setTempCookie(c, nonceCookie, nonce)
 
-	url := p.OAuth2.AuthCodeURL(state, oauth2.AccessTypeOnline)
+	url := p.OAuth2.AuthCodeURL(state,
+		oauth2.AccessTypeOnline,
+		oauth2.SetAuthURLParam("nonce", nonce),
+	)
 	return c.Redirect(http.StatusFound, url)
 }
 
-// Callback GET /api/auth/:provider/callback — コード交換 → JIT → JWT 発行
+// Callback GET /api/auth/:provider/callback — OIDC コード交換 → ID Token 検証 → ログイン処理
 func (h *AuthHandler) Callback(c *echo.Context) error {
-	providerName := c.Param("provider")
-	p, ok := h.providers[providerName]
-	if !ok {
-		return c.JSON(http.StatusBadRequest, map[string]any{"error": "unknown provider: " + providerName})
+	p, err := h.lookupProvider(c)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
 
-	// state 検証
+	// state 検証（CSRF 対策）
 	stateCookieVal, err := c.Cookie(stateCookie)
 	if err != nil || stateCookieVal.Value != c.QueryParam("state") {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid state"})
 	}
-	// state Cookie を削除
-	sc := new(http.Cookie)
-	sc.Name = stateCookie
-	sc.Value = ""
-	sc.MaxAge = -1
-	sc.Path = "/"
-	c.SetCookie(sc)
+	deleteCookie(c, stateCookie)
 
-	// Authorization Code → Access Token
+	// nonce Cookie を取得・削除
+	nonceCookieVal, err := c.Cookie(nonceCookie)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "missing nonce cookie"})
+	}
+	expectedNonce := nonceCookieVal.Value
+	deleteCookie(c, nonceCookie)
+
+	// Authorization Code → トークンセット
 	token, err := p.OAuth2.Exchange(c.Request().Context(), c.QueryParam("code"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": "code exchange failed: " + err.Error()})
 	}
 
-	// ユーザー情報取得
-	info, err := fetchUserInfo(c.Request().Context(), token.AccessToken, p.UserinfoURL)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": "fetch userinfo: " + err.Error()})
+	// ID Token を取り出す
+	rawIDToken, ok := token.Extra("id_token").(string)
+	if !ok {
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": "id_token not found in token response"})
 	}
 
-	// JIT プロビジョニング
-	user, err := h.userRepo.UpsertWithIdentity(
-		c.Request().Context(),
-		info.Email, info.Name, providerName, info.Sub,
-	)
+	// ID Token 検証（署名・iss・aud・exp・nonce）
+	claims, err := p.Verifier.Verify(c.Request().Context(), rawIDToken, expectedNonce)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": "upsert user: " + err.Error()})
+		return c.JSON(http.StatusUnauthorized, map[string]any{"error": "id token verification failed: " + err.Error()})
 	}
 
-	// アプリ独自 JWT を発行して HttpOnly Cookie にセット
-	appToken, err := h.issueToken(user)
+	// ビジネスロジック（メール許可チェック・プロビジョニング・JWT発行）
+	appToken, err := h.usecase.ProcessLogin(c.Request().Context(), p.Name, claims)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]any{"error": "issue token: " + err.Error()})
+		var authErr *usecase.AuthError
+		if errors.As(err, &authErr) {
+			return c.Redirect(http.StatusFound, h.frontendURL+"?error="+authErr.Code)
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
+
 	setSessionCookie(c, appToken, cookieMaxAge)
-
 	return c.Redirect(http.StatusFound, h.frontendURL)
 }
 
@@ -216,7 +171,6 @@ func (h *AuthHandler) Me(c *echo.Context) error {
 			"role":  "admin",
 		})
 	}
-
 	user := userFromContext(c)
 	if user == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]any{"error": "not authenticated"})
@@ -235,49 +189,57 @@ func (h *AuthHandler) Logout(c *echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]any{"ok": true})
 }
 
-// userFromContext は echo.Context からユーザーを取り出すヘルパー
-// (middleware パッケージへの依存を避けるため handler 内で定義)
+// --- ヘルパー ---
+
+func (h *AuthHandler) lookupProvider(c *echo.Context) (*ProviderConfig, error) {
+	name := c.Param("provider")
+	p, ok := h.providers[name]
+	if !ok {
+		return nil, errors.New("unknown provider: " + name)
+	}
+	return p, nil
+}
+
 func userFromContext(c *echo.Context) *domain.User {
 	u, _ := (*c).Get("auth_user").(*domain.User)
 	return u
 }
 
-// --- ユーザー情報取得 ---
-
-type oauthUserInfo struct {
-	Sub   string `json:"sub"`
-	Email string `json:"email"`
-	Name  string `json:"name"`
+func randomToken() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.URLEncoding.EncodeToString(b), nil
 }
 
-func fetchUserInfo(ctx context.Context, accessToken, userinfoURL string) (*oauthUserInfo, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, userinfoURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+accessToken)
+func setSessionCookie(c *echo.Context, value string, maxAge int) {
+	cookie := new(http.Cookie)
+	cookie.Name = cookieName
+	cookie.Value = value
+	cookie.HttpOnly = true
+	cookie.Path = "/"
+	cookie.MaxAge = maxAge
+	cookie.SameSite = http.SameSiteLaxMode
+	(*c).SetCookie(cookie)
+}
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
+func setTempCookie(c *echo.Context, name, value string) {
+	cookie := new(http.Cookie)
+	cookie.Name = name
+	cookie.Value = value
+	cookie.HttpOnly = true
+	cookie.Path = "/"
+	cookie.MaxAge = 600 // 10 分
+	cookie.SameSite = http.SameSiteLaxMode
+	(*c).SetCookie(cookie)
+}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("userinfo returned %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var info oauthUserInfo
-	if err := json.Unmarshal(body, &info); err != nil {
-		return nil, err
-	}
-	if info.Email == "" || info.Sub == "" {
-		return nil, fmt.Errorf("missing email or sub in userinfo response")
-	}
-	return &info, nil
+func deleteCookie(c *echo.Context, name string) {
+	cookie := new(http.Cookie)
+	cookie.Name = name
+	cookie.Value = ""
+	cookie.MaxAge = -1
+	cookie.Path = "/"
+	(*c).SetCookie(cookie)
 }

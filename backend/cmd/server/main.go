@@ -5,29 +5,32 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/labstack/echo/v5"
 	echomw "github.com/labstack/echo/v5/middleware"
 	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
 
 	"daileycoding/backend/internal/handler"
 	dockerexec "daileycoding/backend/internal/infrastructure/docker"
 	"daileycoding/backend/internal/infrastructure/db"
 	"daileycoding/backend/internal/infrastructure/db/repository"
+	oidcinfra "daileycoding/backend/internal/infrastructure/oidc"
 	appmw "daileycoding/backend/internal/middleware"
 	"daileycoding/backend/internal/usecase"
 )
 
 func main() {
-	image          := getEnv("PYTHON_IMAGE",     "python:3.14-slim")
-	addr           := getEnv("ADDR",             ":8080")
-	frontendOrigin := getEnv("FRONTEND_ORIGIN",  "http://localhost:3000")
+	image          := getEnv("PYTHON_IMAGE",    "python:3.14-slim")
+	addr           := getEnv("ADDR",            ":8080")
+	frontendOrigin := getEnv("FRONTEND_ORIGIN", "http://localhost:3000")
 	dsn            := getEnv("DATABASE_URL",
 		"postgresql://daileycoding:daileycoding@localhost:5432/daileycoding?sslmode=disable")
-	jwtSecret      := []byte(getEnv("JWT_SECRET", "dev-secret-change-in-production"))
-	bypass         := getEnv("AUTH_BYPASS", "") == "true"
+	jwtSecret     := []byte(getEnv("JWT_SECRET", "dev-secret-change-in-production"))
+	bypass        := getEnv("AUTH_BYPASS", "") == "true"
+	allowDomains  := splitCSV(os.Getenv("ALLOWED_DOMAINS"))
 
 	// ── DB マイグレーション ──
 	log.Println("running migrations...")
@@ -43,9 +46,10 @@ func main() {
 	defer pool.Close()
 
 	// ── リポジトリ ──
-	problemRepo    := repository.NewProblemRepository(pool)
-	submissionRepo := repository.NewSubmissionRepository(pool)
-	userRepo       := repository.NewUserRepository(pool)
+	problemRepo      := repository.NewProblemRepository(pool)
+	submissionRepo   := repository.NewSubmissionRepository(pool)
+	userRepo         := repository.NewUserRepository(pool)
+	allowedEmailRepo := repository.NewAllowedEmailRepository(pool)
 
 	// ── コード実行エンジン ──
 	executor, err := dockerexec.NewExecutor(image)
@@ -58,15 +62,18 @@ func main() {
 		log.Fatalf("ensure image: %v", err)
 	}
 
-	// ── OAuth2 プロバイダー設定 ──
-	providers := buildProviders(frontendOrigin)
+	// ── OIDC プロバイダー設定 ──
+	oidcCtx, oidcCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer oidcCancel()
+	providers := buildProviders(oidcCtx)
 
 	// ── ユースケース / ハンドラー ──
 	judgeUsecase      := usecase.NewJudgeUsecase(executor, problemRepo, submissionRepo)
 	submitHandler     := handler.NewSubmitHandler(judgeUsecase)
 	problemHandler    := handler.NewProblemHandler(problemRepo)
 	submissionHandler := handler.NewSubmissionHandler(submissionRepo)
-	authHandler       := handler.NewAuthHandler(userRepo, jwtSecret, providers, frontendOrigin, bypass)
+	authUsecase       := usecase.NewAuthUsecase(userRepo, allowedEmailRepo, allowDomains, jwtSecret)
+	authHandler       := handler.NewAuthHandler(authUsecase, providers, frontendOrigin, bypass)
 
 	// ── Echo ルーター ──
 	e := echo.New()
@@ -107,47 +114,55 @@ func main() {
 	admin.Use(appmw.AdminRequired())
 	admin.GET("/api/admin/problems", problemHandler.ListAll)
 
-	log.Printf("server starting on %s (image: %s, bypass=%v)", addr, image, bypass)
+	log.Printf("server starting on %s (image: %s, bypass=%v, allowDomains=%v)",
+		addr, image, bypass, allowDomains)
 	if err := e.Start(addr); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
 }
 
-// buildProviders は利用可能な OAuth2 プロバイダーを設定する。
+// buildProviders は利用可能な OIDC プロバイダーを設定する。
 // 環境変数が未設定のプロバイダーはスキップされる。
-func buildProviders(frontendOrigin string) []*handler.ProviderConfig {
+func buildProviders(ctx context.Context) []*handler.ProviderConfig {
 	var providers []*handler.ProviderConfig
 
 	if clientID := os.Getenv("GOOGLE_CLIENT_ID"); clientID != "" {
+		p, err := oidc.NewProvider(ctx, "https://accounts.google.com")
+		if err != nil {
+			log.Fatalf("init google oidc provider: %v", err)
+		}
 		providers = append(providers, &handler.ProviderConfig{
 			Name: "google",
 			OAuth2: &oauth2.Config{
 				ClientID:     clientID,
 				ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
 				RedirectURL:  os.Getenv("GOOGLE_CALLBACK_URL"),
-				Scopes:       []string{"openid", "email", "profile"},
-				Endpoint:     google.Endpoint,
+				Scopes:       []string{oidc.ScopeOpenID, "email", "profile"},
+				Endpoint:     p.Endpoint(),
 			},
-			UserinfoURL: "https://openidconnect.googleapis.com/v1/userinfo",
+			Verifier: oidcinfra.NewVerifier(p.Verifier(&oidc.Config{ClientID: clientID})),
 		})
+		log.Println("oidc provider registered: google")
 	}
 
 	if clientID := os.Getenv("KEYCLOAK_CLIENT_ID"); clientID != "" {
-		issuer := os.Getenv("KEYCLOAK_ISSUER") // 例: http://keycloak:8080/realms/daileycoding
+		issuer := os.Getenv("KEYCLOAK_ISSUER")
+		p, err := oidc.NewProvider(ctx, issuer)
+		if err != nil {
+			log.Fatalf("init keycloak oidc provider: %v", err)
+		}
 		providers = append(providers, &handler.ProviderConfig{
 			Name: "keycloak",
 			OAuth2: &oauth2.Config{
 				ClientID:     clientID,
 				ClientSecret: os.Getenv("KEYCLOAK_CLIENT_SECRET"),
 				RedirectURL:  os.Getenv("KEYCLOAK_CALLBACK_URL"),
-				Scopes:       []string{"openid", "email", "profile"},
-				Endpoint: oauth2.Endpoint{
-					AuthURL:  issuer + "/protocol/openid-connect/auth",
-					TokenURL: issuer + "/protocol/openid-connect/token",
-				},
+				Scopes:       []string{oidc.ScopeOpenID, "email", "profile"},
+				Endpoint:     p.Endpoint(),
 			},
-			UserinfoURL: issuer + "/protocol/openid-connect/userinfo",
+			Verifier: oidcinfra.NewVerifier(p.Verifier(&oidc.Config{ClientID: clientID})),
 		})
+		log.Println("oidc provider registered: keycloak")
 	}
 
 	return providers
@@ -174,4 +189,19 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// splitCSV はカンマ区切り文字列をトリムしてスライスに変換する。空文字は除外。
+func splitCSV(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if t := strings.TrimSpace(p); t != "" {
+			result = append(result, t)
+		}
+	}
+	return result
 }
