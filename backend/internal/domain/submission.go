@@ -35,6 +35,7 @@ type SubmissionResult struct {
 
 // CreateSubmissionParams は Submission 作成時の入力
 type CreateSubmissionParams struct {
+	UserID        *uuid.UUID // 認証済みなら非 nil
 	ProblemID     uuid.UUID
 	Code          string
 	Language      string

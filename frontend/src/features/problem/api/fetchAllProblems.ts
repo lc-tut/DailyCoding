@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import { API_BASE } from "@/shared/config/api";
 import type { Problem } from "../model/problem";
 
@@ -14,7 +15,7 @@ export type FetchAllProblemsParams = {
   sort?: string;
 };
 
-// fetchAllProblems は GET /api/admin/problems を呼ぶ。
+// fetchAllProblems は GET /api/admin/problems を呼ぶ（サーバーコンポーネント専用）。
 // filter / sort はバックエンドで処理される。
 export async function fetchAllProblems(params?: FetchAllProblemsParams): Promise<Problem[]> {
   const url = new URL(`${API_BASE}/api/admin/problems`);
@@ -25,9 +26,14 @@ export async function fetchAllProblems(params?: FetchAllProblemsParams): Promise
     url.searchParams.set("sort", params.sort);
   }
 
+  const cookieStore = await cookies();
+
   const res = await fetch(url.toString(), {
     cache: "no-store",
     signal: AbortSignal.timeout(3000),
+    headers: {
+      Cookie: cookieStore.toString(),
+    },
   });
   if (!res.ok) {
     throw new Error(`GET /api/admin/problems failed: ${res.status}`);

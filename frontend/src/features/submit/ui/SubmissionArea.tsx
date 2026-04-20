@@ -1,10 +1,11 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import ResultPanel from "./ResultPanel";
-import { submitCode } from "../api/submitCode";
+import { submitCode, UnauthorizedError } from "../api/submitCode";
 import type { JudgeResponse } from "../api/submitCode";
 
 const CodeEditor = dynamic(
@@ -18,10 +19,22 @@ type Props = {
 };
 
 export default function SubmissionArea({ initialCode, problemId }: Props) {
+  const router = useRouter();
+  const draftKey = `draft_code_${problemId}`;
+
   const [code, setCode] = useState(initialCode);
   const [response, setResponse] = useState<JudgeResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // ログイン後に復帰したとき sessionStorage からコードを復元する
+  useEffect(() => {
+    const saved = sessionStorage.getItem(draftKey);
+    if (saved !== null) {
+      setCode(saved);
+      sessionStorage.removeItem(draftKey);
+    }
+  }, [draftKey]);
 
   const handleSubmit = async () => {
     setLoading(true);
@@ -31,6 +44,11 @@ export default function SubmissionArea({ initialCode, problemId }: Props) {
       const data = await submitCode(code, problemId);
       setResponse(data);
     } catch (e) {
+      if (e instanceof UnauthorizedError) {
+        sessionStorage.setItem(draftKey, code);
+        router.push("/login");
+        return;
+      }
       setError(e instanceof Error ? e.message : "不明なエラー");
     } finally {
       setLoading(false);

@@ -1,18 +1,26 @@
 "use client";
 
-import { createContext, useContext } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import type { User } from "../model/user";
-import { MOCK_USER } from "../model/user";
+import { API_BASE } from "../config/api";
 
-const UserContext = createContext<User>(MOCK_USER);
+type UserState = User | null;
+
+const UserContext = createContext<UserState>(null);
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
-  // Phase2: ここで Keycloak のトークンを検証してユーザーをセットする
-  return (
-    <UserContext.Provider value={MOCK_USER}>{children}</UserContext.Provider>
-  );
+  const [user, setUser] = useState<UserState>(null);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/auth/me`, { credentials: "include" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: User | null) => setUser(data))
+      .catch(() => setUser(null));
+  }, []);
+
+  return <UserContext.Provider value={user}>{children}</UserContext.Provider>;
 }
 
-export function useUser(): User {
+export function useUser(): UserState {
   return useContext(UserContext);
 }

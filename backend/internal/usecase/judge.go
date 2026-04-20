@@ -46,7 +46,7 @@ func NewJudgeUsecase(
 }
 
 // Judge はテストケースを DB から取得し、実行・採点・保存を行う
-func (u *JudgeUsecase) Judge(ctx context.Context, problemID uuid.UUID, code string) (*domain.JudgeResponse, error) {
+func (u *JudgeUsecase) Judge(ctx context.Context, problemID uuid.UUID, code string, userID *uuid.UUID) (*domain.JudgeResponse, error) {
 	// 1. テストケースを DB から取得
 	testCases, err := u.problemRepo.GetTestCasesByProblemID(ctx, problemID)
 	if err != nil {
@@ -107,6 +107,7 @@ func (u *JudgeUsecase) Judge(ctx context.Context, problemID uuid.UUID, code stri
 
 	// 4. 提出をトランザクションで保存
 	if _, err = u.submissionRepo.Save(ctx, domain.CreateSubmissionParams{
+		UserID:        userID,
 		ProblemID:     problemID,
 		Code:          code,
 		Language:      "python",

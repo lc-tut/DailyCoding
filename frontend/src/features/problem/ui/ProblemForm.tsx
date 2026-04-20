@@ -27,7 +27,7 @@ const emptyTestCase = (): TestCaseField => ({
 export default function ProblemForm() {
   const router = useRouter();
   const user = useUser();
-  const isAdmin = user.role === "admin";
+  const isAdmin = user?.role === "admin";
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
