@@ -49,7 +49,7 @@ func (r *UserRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Use
 //  3. どちらも存在しない → users + user_identities を INSERT して返す
 func (r *UserRepository) UpsertWithIdentity(
 	ctx context.Context,
-	email, name, provider, providerSub string,
+	email, name, provider, providerSub, roleHint string,
 ) (*domain.User, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
@@ -71,15 +71,19 @@ func (r *UserRepository) UpsertWithIdentity(
 	}
 
 	if err == nil {
-		// identity が既存 → ユーザーを返す（name のみ更新）
+		// identity が既存 → name と roleHint を更新
+		// roleHint が空のときは既存ロールを維持する
 		var u domain.User
 		var idStr string
 		if err := tx.QueryRow(ctx, `
-			UPDATE users SET name = $2, updated_at = NOW()
+			UPDATE users
+			SET    name       = $2,
+			       role       = CASE WHEN $3 != '' THEN $3 ELSE role END,
+			       updated_at = NOW()
 			WHERE  id = $1
 			RETURNING id, email, name, role, created_at, updated_at
-		`, userIDStr, name).Scan(&idStr, &u.Email, &u.Name, &u.Role, &u.CreatedAt, &u.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("update user name: %w", err)
+		`, userIDStr, name, roleHint).Scan(&idStr, &u.Email, &u.Name, &u.Role, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("update user: %w", err)
 		}
 		u.ID, err = uuid.Parse(idStr)
 		if err != nil {
@@ -105,10 +109,12 @@ func (r *UserRepository) UpsertWithIdentity(
 
 	if err != nil {
 		// 3. 新規ユーザー作成
+		// roleHint が空のときはデフォルト ('student') をそのまま使う
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO users (email, name) VALUES ($1, $2)
+			INSERT INTO users (email, name, role)
+			VALUES ($1, $2, CASE WHEN $3 != '' THEN $3 ELSE 'student' END)
 			RETURNING id, email, name, role, created_at, updated_at
-		`, email, name).Scan(&idStr, &u.Email, &u.Name, &u.Role, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		`, email, name, roleHint).Scan(&idStr, &u.Email, &u.Name, &u.Role, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("insert user: %w", err)
 		}
 	}
