@@ -131,6 +131,29 @@ ADMIN_GROUPS=dailycoding-admins   # カンマ区切りで複数指定可
 
 管理者になると `/admin/problems` の問題管理ページにアクセスできます。
 
+### 6. 外部メールアドレスの個別許可
+
+`ALLOWED_DOMAINS` に含まれないドメインのユーザー（外部協力者など）を個別に許可できます。
+
+```bash
+docker compose exec postgres psql -U daileycoding -d daileycoding
+```
+
+```sql
+-- 外部メールアドレスを許可リストに追加
+INSERT INTO allowed_emails (email, note)
+VALUES ('guest@gmail.com', '外部協力者 山田太郎');
+
+-- 一覧確認
+SELECT * FROM allowed_emails;
+
+-- 削除（アクセス停止）
+DELETE FROM allowed_emails WHERE email = 'guest@gmail.com';
+```
+
+> `ALLOWED_DOMAINS` が未設定の場合はこのテーブルに関係なく全員許可になります。
+> 本番環境では必ず `ALLOWED_DOMAINS` を設定してください。
+
 ---
 
 ## 起動
