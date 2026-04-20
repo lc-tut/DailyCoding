@@ -40,15 +40,18 @@ cd frontend && pnpm install && cd ..
 
 ### 3. 環境変数の設定
 
-バックエンドは起動時に環境変数を読みます。`backend/.env.example` をコピーして `backend/.env` を作成し、値を設定してください。
+バックエンドは起動時に環境変数を読みます。ローカル開発は `.env` ファイルか shell で設定してください。
+
+#### 最小構成（認証バイパスあり）
 
 ```bash
-cp backend/.env.example backend/.env
+# backend/.env または shell に設定
+export AUTH_BYPASS=true          # JWT 検証をスキップ（テスト管理者でログイン済み扱い）
+export DATABASE_URL="postgresql://daileycoding:daileycoding@localhost:5432/daileycoding?sslmode=disable"
+export FRONTEND_ORIGIN="http://localhost:3000"
 ```
 
-> **`AUTH_BYPASS` について**
-> `AUTH_BYPASS=true` にすると JWT 検証を完全スキップし、固定のテスト管理者として動作します。
-> **デフォルトは `false`** です。開発時も OIDC プロバイダーを使ってください。
+`AUTH_BYPASS=true` の場合、`/api/auth/me` は常に固定のテスト管理者を返します。OAuth2 設定は不要です。
 
 #### Google OAuth2 を使う場合
 
@@ -84,50 +87,22 @@ mise run db:migrate  # マイグレーションを実行（初回・変更時）
 
 マイグレーションは `backend/internal/infrastructure/db/migrations/` 以下の SQL ファイルが順番に適用されます。
 
-### 5. 管理者アカウントの登録
+### 5. 最初の管理者ユーザーの登録
 
-ログインすると `role=student` のユーザーが自動作成されます。
-管理者への昇格には **2 つの方法** があります。
-
-#### 方法 A: DB を直接更新（手動・初回セットアップ向け）
-
-まず対象ユーザーが一度ログインしてアカウントを作成してから実行します。
+Google / Keycloak でログインすると `role=student` のユーザーが自動作成されます。
+最初の管理者は DB に直接 INSERT するか、既存ユーザーを UPDATE して設定します。
 
 ```bash
+# コンテナへ接続
 docker compose exec postgres psql -U daileycoding -d daileycoding
-```
 
-```sql
--- ログイン済みユーザーを管理者に昇格
+# ログイン済みユーザーの role を admin に昇格
 UPDATE users SET role = 'admin' WHERE email = 'yourname@example.com';
 
--- 昇格後は再ログインすると admin ロールが反映される
+# まだ一度もログインしていない場合は INSERT（Google ログイン後に UPDATE する方が簡単）
+INSERT INTO users (email, name, role)
+VALUES ('yourname@example.com', '管理者名', 'admin');
 ```
-
-#### 方法 B: authentik グループで自動同期（推奨・本番環境向け）
-
-authentik を OIDC プロバイダーとして使う場合、グループ単位で管理者を自動付与できます。
-
-**authentik 側の設定:**
-
-1. authentik 管理画面でグループ（例: `dailycoding-admins`）を作成し、管理者にしたいユーザーを追加する
-2. Provider の **Advanced Protocol Settings → Scopes** に `groups` Property Mapping を追加する
-   （これにより ID Token に `groups` クレームが含まれるようになる）
-
-**バックエンド側の設定:**
-
-```bash
-# backend/.env.prod に追記
-ADMIN_GROUPS=dailycoding-admins   # カンマ区切りで複数指定可
-```
-
-この設定を有効にすると、ログイン時にグループが照合されロールが自動で同期されます。
-
-| 状態 | 結果 |
-|---|---|
-| グループに所属している | `role = admin` |
-| グループから除外された | 次回ログイン時に `role = student` に戻る |
-| `ADMIN_GROUPS` 未設定 | ロールを変更しない（方法 A の手動管理） |
 
 管理者になると `/admin/problems` の問題管理ページにアクセスできます。
 
