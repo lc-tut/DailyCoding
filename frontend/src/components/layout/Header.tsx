@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import { useUser } from "@/shared/providers/UserProvider";
 import { API_BASE } from "@/shared/config/api";
+import { requiresAuth } from "@/shared/lib/auth";
 
 const PROVIDER_LABELS: Record<string, string> = {
   google: "Google",
@@ -12,6 +14,7 @@ const PROVIDER_LABELS: Record<string, string> = {
 
 export default function Header() {
   const user = useUser();
+  const pathname = usePathname();
   const [providers, setProviders] = useState<string[]>([]);
 
   useEffect(() => {
@@ -26,7 +29,7 @@ export default function Header() {
       method: "POST",
       credentials: "include",
     });
-    window.location.href = "/";
+    window.location.href = requiresAuth(pathname) ? "/" : pathname;
   };
 
   return (
@@ -88,7 +91,7 @@ export default function Header() {
           providers.map((provider) => (
             <a
               key={provider}
-              href={`${API_BASE}/api/auth/${provider}`}
+              href={`${API_BASE}/api/auth/${provider}?next=${encodeURIComponent(pathname)}`}
               className="text-xs px-3 py-1 rounded bg-[var(--color-mauve)] text-[var(--color-base)] hover:opacity-80 transition-opacity font-semibold"
             >
               {PROVIDER_LABELS[provider] ?? provider} でログイン

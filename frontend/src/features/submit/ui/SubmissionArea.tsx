@@ -46,7 +46,7 @@ export default function SubmissionArea({ initialCode, problemId }: Props) {
     } catch (e) {
       if (e instanceof UnauthorizedError) {
         sessionStorage.setItem(draftKey, code);
-        router.push("/login");
+        router.push(`/login?next=${encodeURIComponent(window.location.pathname)}`);
         return;
       }
       setError(e instanceof Error ? e.message : "不明なエラー");

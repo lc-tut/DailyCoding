@@ -46,10 +46,16 @@ func main() {
 	defer pool.Close()
 
 	// ── リポジトリ ──
-	problemRepo      := repository.NewProblemRepository(pool)
-	submissionRepo   := repository.NewSubmissionRepository(pool)
-	userRepo         := repository.NewUserRepository(pool)
-	allowedEmailRepo := repository.NewAllowedEmailRepository(pool)
+	problemRepo    := repository.NewProblemRepository(pool)
+	submissionRepo := repository.NewSubmissionRepository(pool)
+	userRepo       := repository.NewUserRepository(pool)
+
+	// ALLOWED_DOMAINS が未設定のときは allowedEmailRepo を nil にして全員許可（開発用）
+	// ALLOWED_DOMAINS が設定されている場合は allowed_emails テーブルも参照する
+	var allowedEmailRepo usecase.AuthAllowedEmailRepository
+	if len(allowDomains) > 0 {
+		allowedEmailRepo = repository.NewAllowedEmailRepository(pool)
+	}
 
 	// ── コード実行エンジン ──
 	executor, err := dockerexec.NewExecutor(image)
