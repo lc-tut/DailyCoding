@@ -12,7 +12,7 @@ import (
 )
 
 type judger interface {
-	Judge(ctx context.Context, problemID uuid.UUID, code string, userID *uuid.UUID) (*domain.JudgeResponse, error)
+	Judge(ctx context.Context, problemID uuid.UUID, code string, userID uuid.UUID) (*domain.JudgeResponse, error)
 }
 
 // SubmitHandler は POST /api/submit を処理する
@@ -36,14 +36,12 @@ func (h *SubmitHandler) Handle(c *echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]any{"error": "problem_id is required"})
 	}
 
-	// 認証済みユーザーがいれば user_id を渡す（未認証なら nil のまま保存）
-	var userID *uuid.UUID
-	if u := userFromContext(c); u != nil {
-		id := u.ID
-		userID = &id
+	u := userFromContext(c)
+	if u == nil {
+		return c.JSON(http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 	}
 
-	result, err := h.usecase.Judge(c.Request().Context(), req.ProblemID, req.Code, userID)
+	result, err := h.usecase.Judge(c.Request().Context(), req.ProblemID, req.Code, u.ID)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}

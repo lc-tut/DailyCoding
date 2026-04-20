@@ -45,7 +45,7 @@ func (r *SubmissionRepository) Save(
 		params.OverallStatus, params.Score,
 	).Scan(
 		&idStr,
-		&s.UserID, // NULL 許容なので *uuid.UUID として受け取る
+		&s.UserID,
 		&params.ProblemID, // 使い捨て
 		&s.Code, &s.Language, &s.OverallStatus, &s.Score,
 		&s.AIReview, &s.CreatedAt, &s.UpdatedAt,

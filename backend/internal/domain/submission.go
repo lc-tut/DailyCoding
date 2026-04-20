@@ -9,7 +9,7 @@ import (
 // Submission は submissions テーブルのエンティティ
 type Submission struct {
 	ID            uuid.UUID
-	UserID        *uuid.UUID // Phase1: NULL 許容
+	UserID        uuid.UUID
 	ProblemID     uuid.UUID
 	Code          string
 	Language      string
@@ -35,7 +35,7 @@ type SubmissionResult struct {
 
 // CreateSubmissionParams は Submission 作成時の入力
 type CreateSubmissionParams struct {
-	UserID        *uuid.UUID // 認証済みなら非 nil
+	UserID        uuid.UUID
 	ProblemID     uuid.UUID
 	Code          string
 	Language      string
