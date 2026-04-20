@@ -42,10 +42,11 @@ type authUsecase interface {
 
 // AuthHandler は認証フローの HTTP 層を担う。ビジネスロジックは usecase に委譲する。
 type AuthHandler struct {
-	usecase     authUsecase
-	providers   map[string]*ProviderConfig
-	frontendURL string
-	bypass      bool
+	usecase      authUsecase
+	providers    map[string]*ProviderConfig
+	frontendURL  string
+	bypass       bool
+	cookieSecure bool // HTTPS 本番環境では true にして Secure フラグを付与する
 }
 
 func NewAuthHandler(
@@ -53,16 +54,18 @@ func NewAuthHandler(
 	providers []*ProviderConfig,
 	frontendURL string,
 	bypass bool,
+	cookieSecure bool,
 ) *AuthHandler {
 	pm := make(map[string]*ProviderConfig, len(providers))
 	for _, p := range providers {
 		pm[p.Name] = p
 	}
 	return &AuthHandler{
-		usecase:     uc,
-		providers:   pm,
-		frontendURL: frontendURL,
-		bypass:      bypass,
+		usecase:      uc,
+		providers:    pm,
+		frontendURL:  frontendURL,
+		bypass:       bypass,
+		cookieSecure: cookieSecure,
 	}
 }
 
@@ -168,7 +171,7 @@ func (h *AuthHandler) Callback(c *echo.Context) error {
 	}
 	deleteCookie(c, returnCookie)
 
-	setSessionCookie(c, appToken, cookieMaxAge)
+	h.setSessionCookie(c, appToken, cookieMaxAge)
 	return c.Redirect(http.StatusFound, h.frontendURL+returnTo)
 }
 
@@ -196,7 +199,7 @@ func (h *AuthHandler) Me(c *echo.Context) error {
 
 // Logout POST /api/auth/logout — Cookie を削除
 func (h *AuthHandler) Logout(c *echo.Context) error {
-	setSessionCookie(c, "", -1)
+	h.setSessionCookie(c, "", -1)
 	return c.JSON(http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -224,7 +227,7 @@ func randomToken() (string, error) {
 	return base64.URLEncoding.EncodeToString(b), nil
 }
 
-func setSessionCookie(c *echo.Context, value string, maxAge int) {
+func (h *AuthHandler) setSessionCookie(c *echo.Context, value string, maxAge int) {
 	cookie := new(http.Cookie)
 	cookie.Name = cookieName
 	cookie.Value = value
@@ -232,6 +235,7 @@ func setSessionCookie(c *echo.Context, value string, maxAge int) {
 	cookie.Path = "/"
 	cookie.MaxAge = maxAge
 	cookie.SameSite = http.SameSiteLaxMode
+	cookie.Secure = h.cookieSecure
 	(*c).SetCookie(cookie)
 }
 
