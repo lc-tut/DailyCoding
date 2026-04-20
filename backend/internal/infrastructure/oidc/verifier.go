@@ -28,11 +28,14 @@ func (v *Verifier) Verify(ctx context.Context, rawIDToken, expectedNonce string)
 	}
 
 	var c struct {
-		Sub           string `json:"sub"`
-		Email         string `json:"email"`
-		EmailVerified bool   `json:"email_verified"`
-		Name          string `json:"name"`
-		Nonce         string `json:"nonce"`
+		Sub           string   `json:"sub"`
+		Email         string   `json:"email"`
+		EmailVerified bool     `json:"email_verified"`
+		Name          string   `json:"name"`
+		Nonce         string   `json:"nonce"`
+		// groups は authentik などのプロバイダーが発行するグループクレーム。
+		// Google など非対応プロバイダーでは nil になる。
+		Groups        []string `json:"groups"`
 	}
 	if err := idToken.Claims(&c); err != nil {
 		return nil, err
@@ -47,5 +50,6 @@ func (v *Verifier) Verify(ctx context.Context, rawIDToken, expectedNonce string)
 		Email:         c.Email,
 		EmailVerified: c.EmailVerified,
 		Name:          c.Name,
+		Groups:        c.Groups,
 	}, nil
 }

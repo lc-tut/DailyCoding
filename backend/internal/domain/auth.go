@@ -8,6 +8,9 @@ type OIDCClaims struct {
 	Email         string
 	EmailVerified bool
 	Name          string
+	// Groups はプロバイダーが発行したグループ一覧 (例: authentik の groups claim)。
+	// グループクレームを持たないプロバイダー (Google 等) では nil になる。
+	Groups        []string
 }
 
 // AppClaims はアプリ独自 JWT のペイロード

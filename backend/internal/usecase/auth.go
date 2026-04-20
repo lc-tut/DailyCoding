@@ -13,7 +13,9 @@ import (
 
 // AuthUserRepository はユーザーの永続化操作を定義する
 type AuthUserRepository interface {
-	UpsertWithIdentity(ctx context.Context, email, name, provider, providerSub string) (*domain.User, error)
+	// UpsertWithIdentity は JIT プロビジョニングを行う。
+	// roleHint が空文字でない場合、ログイン時にロールを上書きする (SSO グループ同期用)。
+	UpsertWithIdentity(ctx context.Context, email, name, provider, providerSub, roleHint string) (*domain.User, error)
 }
 
 // AuthAllowedEmailRepository は個別許可メールアドレスの参照を定義する
@@ -27,6 +29,9 @@ type AuthUsecase struct {
 	allowedEmailRepo AuthAllowedEmailRepository
 	allowDomains     []string
 	jwtSecret        []byte
+	// adminGroups は admin ロールを付与するグループ名一覧 (authentik の groups claim と照合)。
+	// 空のときはグループによるロール同期を行わない。
+	adminGroups      []string
 }
 
 func NewAuthUsecase(
@@ -34,12 +39,14 @@ func NewAuthUsecase(
 	allowedEmailRepo AuthAllowedEmailRepository,
 	allowDomains []string,
 	jwtSecret []byte,
+	adminGroups []string,
 ) *AuthUsecase {
 	return &AuthUsecase{
 		userRepo:         userRepo,
 		allowedEmailRepo: allowedEmailRepo,
 		allowDomains:     allowDomains,
 		jwtSecret:        jwtSecret,
+		adminGroups:      adminGroups,
 	}
 }
 
@@ -58,9 +65,10 @@ func (u *AuthUsecase) ProcessLogin(ctx context.Context, provider string, claims 
 		return "", &AuthError{Code: "access_denied"}
 	}
 
+	roleHint := u.resolveRoleHint(claims.Groups)
 	user, err := u.userRepo.UpsertWithIdentity(
 		ctx,
-		strings.ToLower(claims.Email), claims.Name, provider, claims.Sub,
+		strings.ToLower(claims.Email), claims.Name, provider, claims.Sub, roleHint,
 	)
 	if err != nil {
 		return "", fmt.Errorf("provision user: %w", err)
@@ -114,6 +122,24 @@ func (u *AuthUsecase) issueAppToken(user *domain.User) (string, error) {
 		},
 	}
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(u.jwtSecret)
+}
+
+// resolveRoleHint は OIDC の groups クレームから roleHint を決定する。
+// adminGroups が設定されていて groups 内に一致するものがあれば "admin"、
+// adminGroups が設定されていて一致しなければ "student" を返す。
+// adminGroups 未設定のときは "" を返し、ロールを変更しない。
+func (u *AuthUsecase) resolveRoleHint(groups []string) string {
+	if len(u.adminGroups) == 0 {
+		return ""
+	}
+	for _, g := range groups {
+		for _, ag := range u.adminGroups {
+			if strings.EqualFold(g, ag) {
+				return "admin"
+			}
+		}
+	}
+	return "student"
 }
 
 // AuthError は認証ビジネスロジックのエラー型

@@ -31,6 +31,7 @@ func main() {
 	jwtSecret     := []byte(getEnv("JWT_SECRET", "dev-secret-change-in-production"))
 	bypass        := getEnv("AUTH_BYPASS", "") == "true"
 	allowDomains  := splitCSV(os.Getenv("ALLOWED_DOMAINS"))
+	adminGroups   := splitCSV(os.Getenv("ADMIN_GROUPS"))
 
 	// ── DB マイグレーション ──
 	log.Println("running migrations...")
@@ -78,7 +79,7 @@ func main() {
 	submitHandler     := handler.NewSubmitHandler(judgeUsecase)
 	problemHandler    := handler.NewProblemHandler(problemRepo)
 	submissionHandler := handler.NewSubmissionHandler(submissionRepo)
-	authUsecase       := usecase.NewAuthUsecase(userRepo, allowedEmailRepo, allowDomains, jwtSecret)
+	authUsecase       := usecase.NewAuthUsecase(userRepo, allowedEmailRepo, allowDomains, jwtSecret, adminGroups)
 	authHandler       := handler.NewAuthHandler(authUsecase, providers, frontendOrigin, bypass)
 
 	// ── Echo ルーター ──
@@ -169,6 +170,30 @@ func buildProviders(ctx context.Context) []*handler.ProviderConfig {
 			Verifier: oidcinfra.NewVerifier(p.Verifier(&oidc.Config{ClientID: clientID})),
 		})
 		log.Println("oidc provider registered: keycloak")
+	}
+
+	// authentik は標準 OIDC に準拠しており Keycloak と同じフローで動作する。
+	// groups クレームを ID Token に含める場合は authentik 側で Property Mapping を設定すること:
+	//   Provider → Edit → Advanced → Scopes に groups マッピングを追加
+	if clientID := os.Getenv("AUTHENTIK_CLIENT_ID"); clientID != "" {
+		issuer := os.Getenv("AUTHENTIK_ISSUER")
+		p, err := oidc.NewProvider(ctx, issuer)
+		if err != nil {
+			log.Fatalf("init authentik oidc provider: %v", err)
+		}
+		providers = append(providers, &handler.ProviderConfig{
+			Name: "authentik",
+			OAuth2: &oauth2.Config{
+				ClientID:     clientID,
+				ClientSecret: os.Getenv("AUTHENTIK_CLIENT_SECRET"),
+				RedirectURL:  os.Getenv("AUTHENTIK_CALLBACK_URL"),
+				// openid/email/profile に加え groups クレームを要求する
+				Scopes:   []string{oidc.ScopeOpenID, "email", "profile"},
+				Endpoint: p.Endpoint(),
+			},
+			Verifier: oidcinfra.NewVerifier(p.Verifier(&oidc.Config{ClientID: clientID})),
+		})
+		log.Println("oidc provider registered: authentik")
 	}
 
 	return providers
