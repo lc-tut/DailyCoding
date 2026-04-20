@@ -18,6 +18,7 @@ const (
 	cookieName   = "dc_session"
 	stateCookie  = "dc_oauth_state"
 	nonceCookie  = "dc_oauth_nonce"
+	returnCookie = "dc_return_to"
 	cookieMaxAge = 24 * 60 * 60 // 24 時間 (秒)
 )
 
@@ -100,6 +101,10 @@ func (h *AuthHandler) Redirect(c *echo.Context) error {
 	setTempCookie(c, stateCookie, state)
 	setTempCookie(c, nonceCookie, nonce)
 
+	if next := c.QueryParam("next"); isSafePath(next) {
+		setTempCookie(c, returnCookie, next)
+	}
+
 	url := p.OAuth2.AuthCodeURL(state,
 		oauth2.AccessTypeOnline,
 		oauth2.SetAuthURLParam("nonce", nonce),
@@ -152,13 +157,19 @@ func (h *AuthHandler) Callback(c *echo.Context) error {
 	if err != nil {
 		var authErr *usecase.AuthError
 		if errors.As(err, &authErr) {
-			return c.Redirect(http.StatusFound, h.frontendURL+"?error="+authErr.Code)
+			return c.Redirect(http.StatusFound, h.frontendURL+"/login?error="+authErr.Code)
 		}
 		return c.JSON(http.StatusInternalServerError, map[string]any{"error": err.Error()})
 	}
 
+	returnTo := "/"
+	if rc, err := c.Cookie(returnCookie); err == nil && isSafePath(rc.Value) {
+		returnTo = rc.Value
+	}
+	deleteCookie(c, returnCookie)
+
 	setSessionCookie(c, appToken, cookieMaxAge)
-	return c.Redirect(http.StatusFound, h.frontendURL)
+	return c.Redirect(http.StatusFound, h.frontendURL+returnTo)
 }
 
 // Me GET /api/auth/me — 現在のログインユーザー情報を返す
@@ -233,6 +244,11 @@ func setTempCookie(c *echo.Context, name, value string) {
 	cookie.MaxAge = 600 // 10 分
 	cookie.SameSite = http.SameSiteLaxMode
 	(*c).SetCookie(cookie)
+}
+
+// isSafePath はリダイレクト先が自サイト内の相対パスかどうか検証する（オープンリダイレクト対策）
+func isSafePath(p string) bool {
+	return len(p) > 0 && p[0] == '/' && (len(p) < 2 || p[1] != '/')
 }
 
 func deleteCookie(c *echo.Context, name string) {
