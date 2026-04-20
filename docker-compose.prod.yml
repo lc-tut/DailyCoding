@@ -65,6 +65,9 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
+      # SSR/SSC がバックエンドを内部ネットワーク経由で呼ぶための URL。
+      # NEXT_PUBLIC_ でないためブラウザには渡らず、サーバーサイドのみで評価される。
+      BACKEND_INTERNAL_URL: http://backend:8080
     networks:
       - internal
     depends_on:
