@@ -1,14 +1,17 @@
 # ─────────────────────────────────────────────────────────────────
 # docker-compose.prod.yml  本番環境構成
 #
-# 外部に公開するのは nginx (80/443) のみ。
+# 外部に公開するのは Caddy (80/443) のみ。
 # backend・frontend・postgres はすべて内部ネットワーク。
 #
 # 起動前の準備:
 #   1. backend/.env.prod を作成 (.env.prod.example を参考)
-#   2. TLS 証明書を ./nginx/certs/ に配置
-#        fullchain.pem / privkey.pem
-#   3. docker compose -f docker-compose.prod.yml up -d
+#   2. docker compose -f docker-compose.prod.yml up -d
+#
+# TLS 証明書は Caddy が tls internal で自動発行する。
+# 初回起動後に以下でクライアントに CA を信頼させる:
+#   docker compose exec caddy caddy trust
+# または /data/caddy/pki/authorities/local/root.crt を各端末にインポート。
 # ─────────────────────────────────────────────────────────────────
 
 services:
@@ -30,7 +33,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-    # ポートを外部に publish しない (内部アクセスのみ)
 
   # ── バックエンド (Go) ───────────────────────────────────────────
   backend:
@@ -40,14 +42,12 @@ services:
     restart: unless-stopped
     env_file: ./backend/.env.prod
     volumes:
-      # Docker コード実行エンジンがホストの Docker デーモンを使用
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - internal
     depends_on:
       postgres:
         condition: service_healthy
-    # ポートを外部に publish しない。nginx 経由のみ。
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/auth/providers || exit 1"]
       interval: 10s
@@ -61,12 +61,9 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        # ブラウザから見た API の向き先。同一オリジン (nginx) を指す。
         NEXT_PUBLIC_API_BASE: https://dailycoding.lcn.ad.jp
     restart: unless-stopped
     environment:
-      # サーバーサイドからバックエンドを呼ぶ際の内部 URL (rewrites 用)
-      BACKEND_INTERNAL_URL: http://backend:8080
       NODE_ENV: production
     networks:
       - internal
@@ -74,17 +71,17 @@ services:
       backend:
         condition: service_healthy
 
-  # ── nginx リバースプロキシ ──────────────────────────────────────
-  nginx:
-    image: nginx:1.27-alpine
+  # ── Caddy リバースプロキシ + 自動 TLS ──────────────────────────
+  caddy:
+    image: caddy:2-alpine
     restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      # TLS 証明書: ./nginx/certs/ にホスト側で配置する
-      - ./nginx/certs:/etc/nginx/certs:ro
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data       # CA 鍵・証明書の永続化
+      - caddy-config:/config   # Caddy ランタイム設定の永続化
     networks:
       - internal
     depends_on:
@@ -97,3 +94,5 @@ networks:
 
 volumes:
   postgres-data:
+  caddy-data:
+  caddy-config:

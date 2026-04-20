@@ -1,5 +1,2 @@
 .env
 .env.prod
-nginx/certs/*.pem
-nginx/certs/*.crt
-nginx/certs/*.key

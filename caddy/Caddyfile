@@ -1,0 +1,26 @@
+# Caddyfile — dailycoding.lcn.ad.jp
+#
+# Caddy は tls internal により自前 CA から TLS 証明書を自動発行する。
+# 初回起動時に /data/ (Docker ボリューム) に CA 鍵と証明書が生成される。
+#
+# クライアント (ブラウザ) に証明書を信頼させる方法:
+#   caddy trust  ← 実行ホストの OS ストアに CA を登録
+#   または /data/caddy/pki/authorities/local/root.crt を
+#   各クライアントの OS / ブラウザにインポートする。
+#
+# 外部 CA / Let's Encrypt DNS チャレンジを使う場合は tls 行を差し替える:
+#   tls /etc/caddy/certs/fullchain.pem /etc/caddy/certs/privkey.pem
+
+dailycoding.lcn.ad.jp {
+    tls internal
+
+    # /api/* → バックエンド (内部ネットワークのみ)
+    handle /api/* {
+        reverse_proxy backend:8080
+    }
+
+    # /* → フロントエンド (Next.js)
+    handle {
+        reverse_proxy frontend:3000
+    }
+}
