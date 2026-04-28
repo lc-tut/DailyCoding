@@ -18,6 +18,7 @@ import (
 	"daileycoding/backend/internal/infrastructure/db"
 	"daileycoding/backend/internal/infrastructure/db/repository"
 	oidcinfra "daileycoding/backend/internal/infrastructure/oidc"
+	snekboxexec "daileycoding/backend/internal/infrastructure/snekbox"
 	appmw "daileycoding/backend/internal/middleware"
 	"daileycoding/backend/internal/usecase"
 )
@@ -60,14 +61,26 @@ func main() {
 	}
 
 	// ── コード実行エンジン ──
-	executor, err := dockerexec.NewExecutor(image)
-	if err != nil {
-		log.Fatalf("init docker executor: %v", err)
-	}
-	pullCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-	if err := executor.EnsureImage(pullCtx); err != nil {
-		log.Fatalf("ensure image: %v", err)
+	// EXECUTOR_TYPE=snekbox のとき snekbox HTTP API を使う。
+	// 未設定または "docker" のときは従来の Docker コンテナ方式を使う。
+	var executor usecase.Executor
+	switch getEnv("EXECUTOR_TYPE", "docker") {
+	case "snekbox":
+		snekboxURL := getEnv("SNEKBOX_URL", "http://snekbox:8060")
+		executor = snekboxexec.NewExecutor(snekboxURL)
+		log.Printf("executor: snekbox (%s)", snekboxURL)
+	default:
+		dockerExecutor, err := dockerexec.NewExecutor(image)
+		if err != nil {
+			log.Fatalf("init docker executor: %v", err)
+		}
+		pullCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		if err := dockerExecutor.EnsureImage(pullCtx); err != nil {
+			log.Fatalf("ensure image: %v", err)
+		}
+		executor = dockerExecutor
+		log.Printf("executor: docker (%s)", image)
 	}
 
 	// ── OIDC プロバイダー設定 ──

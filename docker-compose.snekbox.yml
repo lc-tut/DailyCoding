@@ -1,0 +1,40 @@
+# ─────────────────────────────────────────────────────────────────
+# docker-compose.snekbox.yml  snekbox 実行エンジン用オーバーライド
+#
+# docker-compose.prod.yml と組み合わせて使用する:
+#   docker compose -f docker-compose.prod.yml -f docker-compose.snekbox.yml up -d
+#
+# snekbox について:
+#   https://github.com/python-discord/snekbox
+#   nsjail によるシステムコール制限・namespace 分離を使い、
+#   標準 Docker コンテナよりも強固な Python 実行サンドボックスを提供する。
+#
+# セキュリティ上の注意:
+#   snekbox コンテナは nsjail 起動のため privileged: true が必要。
+#   しかし nsjail 内でのコード実行は厳格に制限されているため、
+#   これはトレードオフとして受け入れられる設計になっている。
+# ─────────────────────────────────────────────────────────────────
+
+services:
+
+  snekbox:
+    image: ghcr.io/python-discord/snekbox:latest
+    restart: unless-stopped
+    privileged: true   # nsjail が namespace・seccomp を設定するために必要
+    ipc: none          # IPC namespace を隔離
+    networks:
+      - internal
+    # snekbox はポート 8060 でリッスン (内部ネットワークのみ・外部非公開)
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8060/eval')\" 2>/dev/null || true"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    environment:
+      EXECUTOR_TYPE: snekbox
+      SNEKBOX_URL:   http://snekbox:8060
+    depends_on:
+      snekbox:
+        condition: service_healthy
