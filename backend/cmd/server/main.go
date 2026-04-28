@@ -32,6 +32,8 @@ func main() {
 	jwtSecret     := []byte(getEnv("JWT_SECRET", "dev-secret-change-in-production"))
 	bypass        := getEnv("AUTH_BYPASS", "") == "true"
 	allowDomains  := splitCSV(os.Getenv("ALLOWED_DOMAINS"))
+	// FRONTEND_ORIGIN が https:// で始まる場合は本番 HTTPS 環境とみなし Cookie に Secure フラグを付与する
+	cookieSecure  := strings.HasPrefix(frontendOrigin, "https://")
 
 	// ── DB マイグレーション ──
 	log.Println("running migrations...")
@@ -92,7 +94,7 @@ func main() {
 	problemHandler    := handler.NewProblemHandler(problemRepo)
 	submissionHandler := handler.NewSubmissionHandler(submissionRepo)
 	authUsecase       := usecase.NewAuthUsecase(userRepo, allowedEmailRepo, allowDomains, jwtSecret)
-	authHandler       := handler.NewAuthHandler(authUsecase, providers, frontendOrigin, bypass)
+	authHandler       := handler.NewAuthHandler(authUsecase, providers, frontendOrigin, bypass, cookieSecure)
 
 	// ── Echo ルーター ──
 	e := echo.New()

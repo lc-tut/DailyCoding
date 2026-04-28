@@ -1,0 +1,101 @@
+# ─────────────────────────────────────────────────────────────────
+# docker-compose.prod.yml  本番環境構成
+#
+# 外部に公開するのは Caddy (80/443) のみ。
+# backend・frontend・postgres はすべて内部ネットワーク。
+#
+# 起動前の準備:
+#   1. backend/.env.prod を作成 (.env.prod.example を参考)
+#   2. docker compose -f docker-compose.prod.yml up -d
+#
+# TLS 証明書は Caddy が tls internal で自動発行する。
+# 初回起動後に以下でクライアントに CA を信頼させる:
+#   docker compose exec caddy caddy trust
+# または /data/caddy/pki/authorities/local/root.crt を各端末にインポート。
+# ─────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── データベース ────────────────────────────────────────────────
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB:-daileycoding}
+      POSTGRES_USER:     ${POSTGRES_USER:-daileycoding}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-daileycoding} -d ${POSTGRES_DB:-daileycoding}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── バックエンド (Go) ───────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: ./backend/.env.prod
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/auth/providers || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ── フロントエンド (Next.js) ────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE: https://dailycoding.lcn.ad.jp
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      # SSR/SSC がバックエンドを内部ネットワーク経由で呼ぶための URL。
+      # NEXT_PUBLIC_ でないためブラウザには渡らず、サーバーサイドのみで評価される。
+      BACKEND_INTERNAL_URL: http://backend:8080
+    networks:
+      - internal
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  # ── Caddy リバースプロキシ + 自動 TLS ──────────────────────────
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data       # CA 鍵・証明書の永続化
+      - caddy-config:/config   # Caddy ランタイム設定の永続化
+    networks:
+      - internal
+    depends_on:
+      - frontend
+      - backend
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  caddy-data:
+  caddy-config:
