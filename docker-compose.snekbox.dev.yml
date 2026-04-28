@@ -1,0 +1,29 @@
+# ─────────────────────────────────────────────────────────────────
+# docker-compose.snekbox.dev.yml  snekbox 開発環境用オーバーライド
+#
+# ホストで動く Go バックエンドから snekbox へ接続できるよう
+# ポート 8060 をローカルホストに公開する。
+#
+# 使用方法:
+#   docker compose -f docker-compose.yml -f docker-compose.snekbox.dev.yml up -d
+#   または: mise run snekbox:dev
+#
+# バックエンドの .env に以下を追加:
+#   EXECUTOR_TYPE=snekbox
+#   SNEKBOX_URL=http://localhost:8060
+# ─────────────────────────────────────────────────────────────────
+
+services:
+
+  snekbox:
+    image: ghcr.io/python-discord/snekbox:latest
+    restart: unless-stopped
+    privileged: true   # nsjail が namespace・seccomp を設定するために必要
+    ipc: none          # IPC namespace を隔離
+    ports:
+      - "127.0.0.1:8060:8060"  # ホストの backend からアクセス可能（外部非公開）
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8060/eval')\" 2>/dev/null || true"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

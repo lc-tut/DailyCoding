@@ -27,3 +27,23 @@ description = "Start Next.js dev server (port 3000)"
 env = {_.file = "frontend/.env"}
 run = "pnpm dev"
 dir = "frontend"
+
+[tasks."snekbox:dev"]
+description = "Start snekbox for local development (exposes port 8060 to host)"
+run = "docker compose -f docker-compose.yml -f docker-compose.snekbox.dev.yml up -d"
+
+[tasks."snekbox:dev:down"]
+description = "Stop snekbox dev container"
+run = "docker compose -f docker-compose.yml -f docker-compose.snekbox.dev.yml down"
+
+[tasks."snekbox:up"]
+description = "Start production stack with snekbox executor (overrides docker-compose.prod.yml)"
+run = "docker compose -f docker-compose.prod.yml -f docker-compose.snekbox.yml up -d"
+
+[tasks."snekbox:down"]
+description = "Stop all services including snekbox"
+run = "docker compose -f docker-compose.prod.yml -f docker-compose.snekbox.yml down"
+
+[tasks."snekbox:logs"]
+description = "Tail snekbox service logs"
+run = "docker compose -f docker-compose.prod.yml -f docker-compose.snekbox.yml logs -f snekbox"

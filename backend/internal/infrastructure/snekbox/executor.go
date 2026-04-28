@@ -9,7 +9,7 @@
 //   - namespaces によるプロセス・ファイルシステム・ネットワーク分離
 //   - メモリ・CPU・プロセス数の上限は snekbox 側の設定で制御
 //
-// API: POST http://<host>/snekeval/
+// API: POST http://<host>/eval
 //
 //	Request:  {"input": "<python code>"}
 //	Response: {"stdout": "...", "returncode": 0, "files": []}
@@ -72,7 +72,7 @@ func (e *Executor) Execute(ctx context.Context, req domain.ExecuteRequest) (doma
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		e.baseURL+"/snekeval/", bytes.NewReader(body))
+		e.baseURL+"/eval", bytes.NewReader(body))
 	if err != nil {
 		return domain.ExecuteResult{}, fmt.Errorf("create request: %w", err)
 	}
